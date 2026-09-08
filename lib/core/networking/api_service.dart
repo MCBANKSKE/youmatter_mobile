@@ -126,11 +126,17 @@ class ApiService {
   }
 
   Future<void> acceptOffer(String attemptId) async {
-    await _dioClient.dio.post('/listener/offers/$attemptId/accept');
+    await _dioClient.dio.post(
+      '/listener/offers/$attemptId/accept',
+      data: {'response': 'accepted'},
+    );
   }
 
   Future<void> declineOffer(String attemptId) async {
-    await _dioClient.dio.post('/listener/offers/$attemptId/decline');
+    await _dioClient.dio.post(
+      '/listener/offers/$attemptId/decline',
+      data: {'response': 'declined'},
+    );
   }
 
   Future<void> cancelTalkRequest(String talkRequestId) async {

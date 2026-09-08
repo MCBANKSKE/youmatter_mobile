@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:youmatter_mobile/core/networking/api_service.dart';
 
 class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({super.key});
@@ -28,10 +29,31 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
 
   bool get _isTalker => _getIntent() == 'talk';
 
-  void _handleContinue() {
-    if (_formKey.currentState!.validate()) {
+  Future<void> _handleContinue() async {
+    if (!_formKey.currentState!.validate()) return;
+    final api = ApiService();
+    try {
+      final data = <String, dynamic>{
+        'age': int.tryParse(_ageController.text.trim()),
+      };
+      if (_selectedGender != null) {
+        data['gender'] = _selectedGender!.toLowerCase();
+      }
+      if (_topicsController.text.trim().isNotEmpty) {
+        data['bio'] =
+            'Topics: ${_topicsController.text.trim()}';
+      }
+      await api.updateProfile(data);
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('Profile saved')));
+      context.go('/home');
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+            content: Text('Could not save profile, continuing anyway')),
+      );
       context.go('/home');
     }
   }

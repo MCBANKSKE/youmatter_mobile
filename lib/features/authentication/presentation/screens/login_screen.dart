@@ -25,10 +25,22 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Future<void> _handleSignIn() async {
     if (_formKey.currentState!.validate()) {
-      await ref.read(authStateProvider.notifier).login(
-            _emailController.text.trim(),
-            _passwordController.text,
-          );
+      final success = await ref
+          .read(authStateProvider.notifier)
+          .login(_emailController.text.trim(), _passwordController.text);
+      if (!mounted || !success) {
+        return;
+      }
+      // The router provider rebuilds once auth state flips to authenticated.
+      // Navigate on the next frame so we're using the fresh (authenticated)
+      // router rather than the stale one that still considers us signed out
+      // (which would bounce a protected route back to /welcome).
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) {
+          return;
+        }
+        context.go('/home');
+      });
     }
   }
 
@@ -38,9 +50,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     ref.listen<AuthState>(authStateProvider, (previous, next) {
       if (next.error != null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(next.error!)),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(next.error!)));
       }
     });
 
@@ -91,7 +102,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     labelText: 'Enter your password',
                     suffixIcon: IconButton(
                       icon: Icon(
-                        _obscurePassword ? Icons.visibility_off : Icons.visibility,
+                        _obscurePassword
+                            ? Icons.visibility_off
+                            : Icons.visibility,
                       ),
                       onPressed: () {
                         setState(() {
@@ -115,7 +128,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   child: TextButton(
                     onPressed: () {
                       ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(content: Text('Password reset placeholder')),
+                        const SnackBar(
+                          content: Text('Password reset placeholder'),
+                        ),
                       );
                     },
                     child: const Text('Forgot password?'),

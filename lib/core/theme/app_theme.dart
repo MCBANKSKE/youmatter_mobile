@@ -17,10 +17,12 @@ class AppTheme {
   static const Color textHint = Color(0xFFB0B0C0);
   static const Color dividerColor = Color(0xFFE8E8F0);
 
-  // Welcome page branded gradient — always light so the logo's dark-blue
-  // elements remain visible regardless of the device's theme setting.
-  static const Color welcomeBackgroundStart = Color(0xFFF7F7FC);
-  static const Color welcomeBackgroundEnd = Color(0xFFE8F0FF);
+  // Welcome page branded gradient — a gentle, warm "dark cream" that is always
+  // light enough so the logo's dark-blue ("MATTER") elements remain clearly
+  // visible regardless of the device's theme setting, without being harsh.
+  static const Color welcomeBackgroundStart = Color(0xFFFBF5EC);
+  static const Color welcomeBackgroundEnd = Color(0xFFF0E7D8);
+  static const Color welcomeCardColor = Color(0xFFFEFAF2);
 
   static const ColorScheme colorScheme = ColorScheme(
     primary: primaryColor,
@@ -68,9 +70,7 @@ class AppTheme {
       backgroundColor: surfaceColor,
       shape: null,
     ),
-    dialogTheme: const DialogThemeData(
-      backgroundColor: surfaceColor,
-    ),
+    dialogTheme: const DialogThemeData(backgroundColor: surfaceColor),
   );
 
   static final ThemeData darkTheme = ThemeData(

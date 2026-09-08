@@ -29,6 +29,24 @@ class ApiService {
     await _dioClient.dio.put('/me/profile', data: data);
   }
 
+  Future<void> updateIdentity(Map<String, dynamic> data) async {
+    await _dioClient.dio.put('/me/identity', data: data);
+  }
+
+  Future<void> updatePreferences(Map<String, dynamic> data) async {
+    await _dioClient.dio.put('/me/preferences', data: data);
+  }
+
+  Future<List<dynamic>> getOffers() async {
+    final response = await _dioClient.dio.get('/listener/offers');
+    return response.data as List<dynamic>;
+  }
+
+  Future<List<dynamic>> getConversations() async {
+    final response = await _dioClient.dio.get('/conversations');
+    return response.data as List<dynamic>;
+  }
+
   Future<void> updateActivity(String activity) async {
     await _dioClient.dio.put('/me/activity', data: {'activity': activity});
   }
@@ -123,7 +141,7 @@ class ApiService {
     final response = await _dioClient.dio.get(
       '/conversations/$conversationId/messages/unread-count',
     );
-    return response.data['count'] ?? 0;
+    return response.data['unread_count'] ?? 0;
   }
 
   Future<void> redactMessage(

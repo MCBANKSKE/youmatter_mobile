@@ -1,14 +1,16 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:youmatter_mobile/features/authentication/providers/auth_provider.dart';
 
-class HomeScreen extends StatefulWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _selectedIndex = 0;
 
   String _getGreeting() {
@@ -16,6 +18,31 @@ class _HomeScreenState extends State<HomeScreen> {
     if (hour < 12) return 'Good morning';
     if (hour < 18) return 'Good afternoon';
     return 'Good evening';
+  }
+
+  /// Pulls a display name out of the stored user (display_name preferred,
+  /// falling back to the anonymous username, then the email prefix).
+  String? _getUserName() {
+    final user = ref.read(authStateProvider).user;
+    if (user == null) {
+      return null;
+    }
+    final identity = user['pseudonymous_identity'];
+    if (identity is Map<String, dynamic>) {
+      final displayName = identity['display_name'];
+      if (displayName is String && displayName.isNotEmpty) {
+        return displayName;
+      }
+      final username = identity['username'];
+      if (username is String && username.isNotEmpty) {
+        return username;
+      }
+    }
+    final email = user['email'];
+    if (email is String && email.contains('@')) {
+      return email.split('@').first;
+    }
+    return null;
   }
 
   void _onItemTapped(int index) {
@@ -39,6 +66,11 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final name = _getUserName();
+    final greeting = name == null
+        ? '${_getGreeting()} 👋'
+        : '${_getGreeting()}, $name 👋';
+
     return Scaffold(
       body: SafeArea(
         child: Padding(
@@ -46,10 +78,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text(
-                '${_getGreeting()} 👋',
-                style: Theme.of(context).textTheme.headlineSmall,
-              ),
+              Text(greeting, style: Theme.of(context).textTheme.headlineSmall),
               const SizedBox(height: 32),
               Text(
                 'What would you like to do?',
@@ -79,8 +108,11 @@ class _HomeScreenState extends State<HomeScreen> {
                         const SizedBox(height: 8),
                         Text(
                           'Find someone who will listen',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                         ),
                       ],
@@ -98,11 +130,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   ),
                 ),
                 child: InkWell(
-                  onTap: () {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('Listener flow placeholder')),
-                    );
-                  },
+                  onTap: () => context.go('/matching'),
                   borderRadius: BorderRadius.circular(16),
                   child: Padding(
                     padding: const EdgeInsets.all(24.0),
@@ -110,14 +138,17 @@ class _HomeScreenState extends State<HomeScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          "I'm available to listen",
+                          "I want to listen",
                           style: Theme.of(context).textTheme.titleLarge,
                         ),
                         const SizedBox(height: 8),
                         Text(
                           'Be there for someone today',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(
+                                color: Theme.of(context)
+                                    .colorScheme
+                                    .onSurfaceVariant,
                               ),
                         ),
                       ],

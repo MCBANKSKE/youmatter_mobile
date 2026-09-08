@@ -1,6 +1,6 @@
 {
-    "name": "youmatter_mobile",
-    "short_name": "youmatter_mobile",
+    "name": "YouMatter",
+    "short_name": "YouMatter",
     "start_url": ".",
     "display": "standalone",
     "background_color": "#0175C2",

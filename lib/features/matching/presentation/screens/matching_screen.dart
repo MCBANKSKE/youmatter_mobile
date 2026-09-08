@@ -18,6 +18,22 @@ class _MatchingScreenState extends State<MatchingScreen> {
   @override
   void initState() {
     super.initState();
+    _goAvailable();
+  }
+
+  @override
+  void dispose() {
+    // Fire-and-forget: return to idle when leaving the listener screen.
+    _api.updateActivity('idle').catchError((_) {});
+    super.dispose();
+  }
+
+  /// The backend only matches users whose activity is
+  /// `available_to_listen`, so set it before polling for offers.
+  Future<void> _goAvailable() async {
+    try {
+      await _api.updateActivity('available_to_listen');
+    } catch (_) {}
     _load();
   }
 

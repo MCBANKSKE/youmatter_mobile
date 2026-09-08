@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
@@ -77,8 +78,15 @@ class _MatchingScreenState extends State<MatchingScreen> {
     } catch (e) {
       if (!mounted) return;
       setState(() => _busy.remove(id));
+      String message = 'Could not respond to this offer. It may have expired.';
+      if (e is DioException) {
+        final data = e.response?.data;
+        if (data is Map && data['message'] != null) {
+          message = data['message'].toString();
+        }
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not respond to this offer')),
+        SnackBar(content: Text(message)),
       );
       _load();
     }

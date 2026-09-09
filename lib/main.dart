@@ -6,6 +6,16 @@ import 'core/theme/app_theme.dart';
 import 'features/authentication/providers/auth_provider.dart';
 import 'navigation/app_router.dart';
 
+// NOTE: local notifications are temporarily disabled (build issues with
+// flutter_local_notifications). Re-enable together with:
+//  - pubspec: flutter_local_notifications + timezone
+//  - android/app/build.gradle.kts: coreLibraryDesugaring (already configured)
+//  - android manifest notification permissions (already configured)
+// void main() {
+//   WidgetsFlutterBinding.ensureInitialized();
+//   LocalNotificationService.instance.initialize();
+//   runApp(const ProviderScope(child: MyApp()));
+// }
 void main() {
   runApp(const ProviderScope(child: MyApp()));
 }

@@ -1,5 +1,7 @@
 ﻿import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+// import 'package:youmatter_mobile/core/services/local_notification_service.dart';
 import 'package:go_router/go_router.dart';
 import 'package:youmatter_mobile/core/theme/youmatter_design.dart';
 import 'package:youmatter_mobile/features/home/models/home_data.dart';
@@ -26,6 +28,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   int _selectedIndex = 0;
   DateTime? lastBackPressTime;
 
+  // NOTE: local notifications are temporarily disabled (see main.dart).
+  // @override
+  // void initState() {
+  //   super.initState();
+  //   _setupNotifications();
+  // }
+  //
+  // /// Ask for notification permission and enable the daily check-in.
+  // Future<void> _setupNotifications() async {
+  //   try {
+  //     await LocalNotificationService.instance.initialize();
+  //     await LocalNotificationService.instance.enableDailyCheckIn();
+  //   } catch (_) {
+  //     // Best-effort; ignore.
+  //   }
+  // }
+
   String _getGreeting() {
     final hour = DateTime.now().hour;
     if (hour < 12) return 'Good morning';
@@ -48,31 +67,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       case 3:
         context.push('/profile');
         break;
-    }
-  }
-
-  Future<void> _startListening() async {
-    try {
-      await ref.read(homeProvider.notifier).setActivity('available_to_listen');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text("You're now available to listen"),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: YouMatterColors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Failed to update activity. Please try again.'),
-            behavior: SnackBarBehavior.floating,
-            backgroundColor: YouMatterColors.red,
-          ),
-        );
-      }
     }
   }
 
@@ -176,10 +170,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             ),
           );
         } else {
-          // Exit the app
-          // On Android, this will close the app
-          // On iOS, this will go to the previous screen
-          // Using go_router, we can handle this differently
+          // Second back press within the window: exit the app.
+          SystemNavigator.pop();
         }
       },
       child: Scaffold(
@@ -224,7 +216,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                           if (showActions) ...[
                             TalkActionCard(onTap: () => context.push('/talk-requests')),
                             const SizedBox(height: YouMatterSpacing.md),
-                            ListenActionCard(onTap: _startListening),
+                            ListenActionCard(onTap: () => context.push('/matching')),
                           ],
                           if (!isIdle)
                             ActivityStatusCard(

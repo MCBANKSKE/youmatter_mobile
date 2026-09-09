@@ -1,0 +1,878 @@
+import 'package:flutter/foundation.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:permission_handler/permission_handler.dart';
+import 'package:timezone/data/latest_all.dart' as tzdata;
+import 'package:timezone/timezone.dart' as tz;
+
+/// Central notification service for YouMatter.
+///
+/// Responsibilities:
+/// - OS notification permissions
+/// - Daily caring check-in notifications
+/// - Listener request notifications
+/// - Notification tap handling
+/// - Scheduling/cancelling notifications
+///
+/// Notifications are best-effort and must never crash the application.
+class LocalNotificationService {
+  LocalNotificationService._();
+
+  static final LocalNotificationService instance =
+      LocalNotificationService._();
+
+  final FlutterLocalNotificationsPlugin _plugin =
+      FlutterLocalNotificationsPlugin();
+
+  // ---------------------------------------------------------------------------
+  // Notification IDs
+  // ---------------------------------------------------------------------------
+
+  static const int _dailyCheckInId = 1001;
+  static const int _someoneNeedsTalkId = 2001;
+
+  // ---------------------------------------------------------------------------
+  // Android channels
+  // ---------------------------------------------------------------------------
+
+  static const String _dailyCheckInChannelId = 'daily_check_in';
+
+  static const String _dailyCheckInChannelName = 'Daily check-in';
+
+  static const String _dailyCheckInChannelDescription =
+      'A gentle daily reminder from YouMatter';
+
+  static const String _someoneNeedsTalkChannelId = 'someone_needs_talk';
+
+  static const String _someoneNeedsTalkChannelName = 'Someone needs to talk';
+
+  static const String _someoneNeedsTalkChannelDescription =
+      'Notifications when someone needs a listener';
+
+  // ---------------------------------------------------------------------------
+  // Initialization state
+  // ---------------------------------------------------------------------------
+
+  bool _ready = false;
+  bool _initializing = false;
+
+  /// Optional callback when a notification is tapped.
+  ///
+  /// Example:
+  ///
+  /// LocalNotificationService.instance.onNotificationTap = (payload) {
+  ///   // Navigate using your router.
+  /// };
+  void Function(String? payload)? onNotificationTap;
+
+  // ---------------------------------------------------------------------------
+  // Check-in messages
+  // ---------------------------------------------------------------------------
+
+  /// A large collection of caring messages.
+  ///
+  /// These are intentionally mixed:
+  /// - general
+  /// - reflective
+  /// - encouraging
+  /// - morning
+  /// - afternoon
+  /// - evening
+  /// - talk
+  /// - listening
+  /// - connection
+  ///
+  /// Avoids making every notification sound like the user is in crisis.
+  static const List<String> _checkInMessages = [
+    // -------------------------------------------------------------------------
+    // GENERAL
+    // -------------------------------------------------------------------------
+
+    'Just checking in ❤️ — how are you feeling today?',
+    'How are you really doing today?',
+    'Hey 👋 — how is your day going so far?',
+    'A gentle reminder that you matter.',
+    'Whatever today looks like, you do not have to face every moment alone.',
+    'How is your heart doing today?',
+    'Checking in 💙 — what kind of day are you having?',
+    'No pressure, no judgment. How are you feeling today?',
+    'Take a breath. You are here, and that matters.',
+    'How are things on your side today?',
+    'Just stopping by to ask: how are you?',
+    'How are you doing beneath the usual "I am fine"?',
+    'A quiet moment to ask: how are you, really?',
+    'You do not have to have everything figured out today.',
+    'Whatever is on your mind, there is room for it here.',
+    'How are you feeling right now — honestly?',
+    'You matter on your best days and your hardest days.',
+    'A little check-in: how is your heart today?',
+    'Hey ❤️ — anything you would like to talk about?',
+    'Checking in 🌿 — how has your day been treating you?',
+    'How is your energy today?',
+    'How are you taking care of yourself today?',
+    'Is there anything you would like to get off your mind?',
+    'What is taking up most of your thoughts today?',
+    'How are things beneath the surface?',
+    'How are you holding up today?',
+    'What is your mood like today?',
+    'What is one word that describes how you feel today?',
+    'How has your day been so far?',
+    'How are you feeling about today?',
+    'Is today giving you what you need?',
+    'What do you need most today?',
+    'What would make today feel a little easier?',
+    'What would make today feel a little better?',
+    'Have you had a moment to breathe today?',
+    'Have you taken a proper break today?',
+    'Have you done something kind for yourself today?',
+    'Have you given yourself enough time to rest?',
+    'Remember to be gentle with yourself today.',
+    'You deserve kindness, including from yourself.',
+    'Do not forget to give yourself some grace today.',
+    'It is okay to take things one step at a time.',
+    'You do not need to solve everything today.',
+    'You can take today one moment at a time.',
+    'Whatever today feels like, you are allowed to feel it.',
+    'It is okay if today is not perfect.',
+    'It is okay to slow down sometimes.',
+    'It is okay to take things slowly.',
+    'You do not have to be strong every second of every day.',
+    'You are allowed to rest.',
+    'You are allowed to start again.',
+    'You are allowed to take a moment for yourself.',
+    'You do not have to pretend everything is okay.',
+    'You do not have to explain everything to be heard.',
+    'Your feelings deserve space.',
+    'Your experience matters.',
+    'Your voice matters.',
+    'Your story matters.',
+    'You matter. Always. ❤️',
+
+    // -------------------------------------------------------------------------
+    // MORNING
+    // -------------------------------------------------------------------------
+
+    'Good morning ☀️ — how are you starting your day?',
+    'Morning ❤️ — how are you feeling today?',
+    'Good morning. Remember, you matter today and every day.',
+    'A new day is here. How are you feeling about it?',
+    'Morning check-in 🌤️ — how is your heart today?',
+    'Good morning. Be gentle with yourself today.',
+    'Morning. You do not have to carry everything at once.',
+    'Good morning 👋 — what kind of day are you hoping for?',
+    'Before the day gets busy, how are you feeling?',
+    'Good morning. Take a breath before you begin.',
+    'Morning 💙 — what is on your mind today?',
+    'Good morning. One moment at a time.',
+    'Morning check-in — how is your energy?',
+    'Good morning. What do you need from yourself today?',
+    'Start gently. You do not need to rush everything.',
+    'Good morning 🌱 — is there something you are looking forward to?',
+    'Morning. Whatever today brings, be kind to yourself.',
+    'Good morning. You are allowed to take today slowly.',
+    'Before you get into the day, check in with yourself.',
+    'Good morning ❤️ — how are you, really?',
+
+    // -------------------------------------------------------------------------
+    // AFTERNOON
+    // -------------------------------------------------------------------------
+
+    'Good afternoon 🌤️ — how is your day going?',
+    'Afternoon check-in 💙 — how are you feeling?',
+    'How has your afternoon been so far?',
+    'A little afternoon reminder: you matter.',
+    'Pause for a moment. How are you doing?',
+    'Afternoon check-in — have you had a moment to breathe?',
+    'How is your energy holding up today?',
+    'Hey 👋 — how is the day treating you?',
+    'Halfway through the day. How are you feeling?',
+    'Take a small pause and check in with yourself.',
+    'Afternoon reminder: you do not have to do everything at once.',
+    'How are things going beneath the busy part of your day?',
+    'Is there something you need a little space from today?',
+    'What has been the best part of your day so far?',
+    'What has been the hardest part of your day so far?',
+    'Is there something making you smile today?',
+    'Is there something weighing on your mind?',
+    'Take a breath. You are doing okay.',
+    'A gentle afternoon hello from YouMatter 💜.',
+    'How are you feeling as the day moves along?',
+
+    // -------------------------------------------------------------------------
+    // EVENING
+    // -------------------------------------------------------------------------
+
+    'Good evening 🌙 — how are you feeling tonight?',
+    'Evening check-in 💙 — how was your day?',
+    'How did today treat you?',
+    'Before the day ends, how are you doing?',
+    'Good evening. Give yourself a moment to breathe.',
+    'Tonight, remember to be gentle with yourself.',
+    'Evening reminder: you made it through another day.',
+    'How are you feeling after everything today?',
+    'What is one thing you are proud of from today?',
+    'What is one thing you would like to leave behind today?',
+    'What is one good thing that happened today?',
+    'Did anything make you smile today?',
+    'Did you get a moment to yourself today?',
+    'Good evening 🌙 — how is your heart tonight?',
+    'The day is winding down. How are you really doing?',
+    'You do not need to carry today into tomorrow.',
+    'Whatever today brought, give yourself some grace tonight.',
+    'Rest is important too.',
+    'Take a slow breath and check in with yourself.',
+    'Good evening ❤️ — anything on your mind before you rest?',
+
+    // -------------------------------------------------------------------------
+    // ENCOURAGEMENT
+    // -------------------------------------------------------------------------
+
+    'You are doing better than you think.',
+    'You have made it through difficult moments before.',
+    'One difficult moment does not define your whole story.',
+    'You do not have to figure everything out today.',
+    'You can take things one step at a time.',
+    'Small steps still count.',
+    'You are allowed to have difficult days.',
+    'You are allowed to ask someone to listen.',
+    'You are allowed to take a break.',
+    'You are allowed to not have all the answers.',
+    'You are allowed to start again.',
+    'You deserve a little kindness today.',
+    'Give yourself the same kindness you would give someone else.',
+    'Be patient with yourself today.',
+    'You do not need to be perfect.',
+    'Progress does not always look obvious.',
+    'Getting through the day can be enough sometimes.',
+    'Take the next small step.',
+    'You are more than one difficult moment.',
+    'There is still room for better moments.',
+    'A hard day does not mean every day will be hard.',
+    'You can pause without giving up.',
+    'Resting is not failing.',
+    'Asking for support is not weakness.',
+    'Being honest about how you feel takes courage.',
+    'You deserve to be heard.',
+    'You deserve compassion.',
+    'You deserve a moment of peace.',
+    'You are not required to have everything together.',
+    'Give yourself permission to breathe.',
+
+    // -------------------------------------------------------------------------
+    // TALK
+    // -------------------------------------------------------------------------
+
+    'Sometimes you just need someone to talk to. Do you?',
+    'Need to talk? Someone is willing to listen.',
+    'Want to talk? You do not need the perfect words.',
+    'Whatever is on your mind, you can start wherever you are.',
+    'You can talk when you are ready.',
+    'You do not have to explain everything at once.',
+    'Sometimes saying it out loud helps.',
+    'What is on your mind today?',
+    'Is there something you have been keeping to yourself?',
+    'Is there something you wish someone would ask you about?',
+    'Is there something you would like to say out loud?',
+    'You do not need the right words. Just start.',
+    'A conversation does not have to start perfectly.',
+    'Start with one sentence. Start with one feeling. Start with hello.',
+    'You can simply say, "Hey."',
+    'You can simply say, "I do not know how I feel."',
+    'You can simply say, "I need someone to listen."',
+    'Your words do not have to be perfect to be heard.',
+    'Sometimes being heard is enough to make a moment feel lighter.',
+    'You do not always need answers. Sometimes you need a conversation.',
+    'If something is weighing on you, you can talk about it.',
+    'There is no judgment in simply being heard.',
+    'You can share as much or as little as you want.',
+    'You can take your time.',
+    'Whenever you are ready, someone may be willing to listen.',
+    'Need a listening ear today?',
+    'Feeling like talking? Start wherever you are.',
+    'Sometimes a simple conversation can make a difference.',
+    'You do not have to carry every thought by yourself.',
+    'Connection can begin with one conversation.',
+
+    // -------------------------------------------------------------------------
+    // LISTEN
+    // -------------------------------------------------------------------------
+
+    'If you have space today, someone might need a listening ear.',
+    'Ready to be there for someone today?',
+    'Someone may need exactly the kindness you can offer.',
+    'Sometimes the best thing we can do is listen.',
+    'You never know how much being heard can mean.',
+    'Someone out there may need someone willing to listen.',
+    'A little kindness can change someone\'s day.',
+    'Your willingness to listen could mean more than you know.',
+    'You can make room for someone else\'s story today.',
+    'Sometimes people do not need answers. They need someone to listen.',
+    'You do not have to fix everything to be there for someone.',
+    'Being present can be powerful.',
+    'Listening is a form of kindness.',
+    'Someone may simply need a safe conversation today.',
+    'If you have the space, consider being there for someone.',
+    'A conversation can start with simply listening.',
+    'You might be the person someone needs today.',
+    'Ready to listen without needing to fix everything?',
+    'Someone may be waiting for a kind listener.',
+    'You never know whose day you might brighten by listening.',
+
+    // -------------------------------------------------------------------------
+    // CONNECTION
+    // -------------------------------------------------------------------------
+
+    'Connection can start with a simple hello.',
+    'A little connection can go a long way.',
+    'You do not have to feel alone in every moment.',
+    'Sometimes one conversation is all we need.',
+    'Human connection matters.',
+    'We all need someone sometimes.',
+    'You never know who might understand what you are going through.',
+    'A stranger can sometimes become exactly the person you needed to talk to.',
+    'One conversation can change how a moment feels.',
+    'You never know how much a kind conversation can mean.',
+    'There is something powerful about being heard.',
+    'There is something powerful about listening.',
+    'People need people. That is okay.',
+    'You do not have to go through every moment alone.',
+    'Connection starts with showing up.',
+    'Sometimes showing up is enough.',
+    'A kind conversation can make a lonely moment feel less lonely.',
+    'Someone is out there willing to listen.',
+    'Someone may be looking for a safe conversation today.',
+    'When you are ready, YouMatter is here.',
+
+    // -------------------------------------------------------------------------
+    // REFLECTION
+    // -------------------------------------------------------------------------
+
+    'What is something you are grateful for today?',
+    'What is one small thing that made you smile today?',
+    'What is something you are proud of yourself for?',
+    'What has been taking up most of your thoughts lately?',
+    'What is something you would like to let go of today?',
+    'What is something you wish someone understood about you?',
+    'What would you tell a friend who was feeling the way you feel?',
+    'What do you need more of today?',
+    'What do you need less of today?',
+    'What has been the best part of your week?',
+    'What has been challenging you lately?',
+    'What is something you are looking forward to?',
+    'Is there something you have been putting off saying?',
+    'What would make this moment a little easier?',
+    'What would make today feel meaningful?',
+    'What is something kind you can do for yourself today?',
+    'When was the last time you gave yourself a proper break?',
+    'What is one thing you handled well today?',
+    'What is something you would like to talk about?',
+    'If you could describe today in one word, what would it be?',
+
+    // -------------------------------------------------------------------------
+    // YOU MATTER BRAND MESSAGES
+    // -------------------------------------------------------------------------
+
+    'You matter. Your voice matters. Your story matters.',
+    'Just a reminder from us: YouMatter. 💙',
+    'YouMatter is here when you need a conversation.',
+    'YouMatter — because being heard matters.',
+    'YouMatter — Talk. Be Heard. You Matter.',
+    'You deserve a place to be heard.',
+    'You deserve a chance to speak without being judged.',
+    'You deserve to be listened to.',
+    'Your story deserves space.',
+    'Your voice deserves to be heard.',
+    'Your feelings are worth acknowledging.',
+    'You are worth listening to.',
+    'You are worth the conversation.',
+    'You are not invisible.',
+    'You are not forgotten.',
+    'You matter to more people than you may realize.',
+    'There is always value in being heard.',
+    'There is always value in listening.',
+    'YouMatter is about people being there for people.',
+    'Talk. Listen. Connect. 💙',
+
+    // -------------------------------------------------------------------------
+    // GENTLE / LOW PRESSURE
+    // -------------------------------------------------------------------------
+
+    'No need to have the perfect answer. How are you?',
+    'No pressure. Just a gentle check-in.',
+    'You do not have to respond to this. Just take a moment for yourself.',
+    'A quiet reminder to check in with yourself.',
+    'Take a moment. There is nowhere you need to rush.',
+    'Pause. Breathe. Check in.',
+    'Just a little reminder to be kind to yourself.',
+    'You can take today at your own pace.',
+    'There is no right way to feel today.',
+    'You do not have to name everything you are feeling.',
+    'It is okay to simply not know.',
+    'It is okay to take your time.',
+    'It is okay to change your mind.',
+    'It is okay to need some space.',
+    'It is okay to want some company.',
+    'It is okay to want someone to listen.',
+    'It is okay to have a good day without having a reason.',
+    'It is okay to have a difficult day.',
+    'Whatever today is, meet yourself with kindness.',
+    'Be gentle with yourself today. 🌿',
+  ];
+
+  // ---------------------------------------------------------------------------
+  // Initialization
+  // ---------------------------------------------------------------------------
+
+  /// Initializes local notifications.
+  ///
+  /// Safe to call multiple times.
+  Future<void> initialize() async {
+    if (kIsWeb) return;
+
+    if (_ready) return;
+
+    // Prevent concurrent initialization.
+    if (_initializing) return;
+
+    _initializing = true;
+
+    try {
+      _initializeTimeZones();
+
+      const androidSettings = AndroidInitializationSettings(
+        '@mipmap/ic_launcher',
+      );
+
+      const darwinSettings = DarwinInitializationSettings(
+        requestAlertPermission: false,
+        requestBadgePermission: false,
+        requestSoundPermission: false,
+      );
+
+      const linuxSettings = LinuxInitializationSettings(
+        defaultActionName: 'Open',
+      );
+
+      const windowsSettings = WindowsInitializationSettings(
+        appName: 'YouMatter',
+        appUserModelId: 'com.youmatter.app',
+        guid: '9f2f3e0a-0b31-4d44-9f4c-6f9f7e5c2b21',
+      );
+
+      const settings = InitializationSettings(
+        android: androidSettings,
+        iOS: darwinSettings,
+        macOS: darwinSettings,
+        linux: linuxSettings,
+        windows: windowsSettings,
+      );
+
+      await _plugin.initialize(
+        settings: settings,
+        onDidReceiveNotificationResponse: _handleNotificationResponse,
+      );
+
+      _ready = true;
+    } catch (e, stackTrace) {
+      debugPrint(
+        'YouMatter notification initialization failed: $e\n$stackTrace',
+      );
+
+      _ready = false;
+    } finally {
+      _initializing = false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Time zone
+  // ---------------------------------------------------------------------------
+
+  void _initializeTimeZones() {
+    try {
+      tzdata.initializeTimeZones();
+
+      // timezone package starts with a default location.
+      //
+      // If your project later adds a native timezone plugin, this method
+      // should be updated to set the actual device timezone.
+      //
+      // Keeping tz.local here makes the service safe while the native
+      // timezone integration is not yet added.
+      if (tz.local.name.isEmpty) {
+        tz.setLocalLocation(tz.getLocation('UTC'));
+      }
+    } catch (e) {
+      debugPrint('Timezone initialization failed: $e');
+
+      try {
+        tz.setLocalLocation(tz.getLocation('UTC'));
+      } catch (_) {}
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Permissions
+  // ---------------------------------------------------------------------------
+
+  /// Requests notification permission.
+  ///
+  /// Returns true when notification permission is available.
+  Future<bool> requestPermission() async {
+    if (kIsWeb) return false;
+
+    try {
+      final status = await Permission.notification.request();
+
+      return status.isGranted ||
+          status.isLimited ||
+          status.isProvisional;
+    } catch (e) {
+      debugPrint('Notification permission request failed: $e');
+      return false;
+    }
+  }
+
+  /// Checks whether notifications are currently allowed.
+  Future<bool> areNotificationsAllowed() async {
+    if (kIsWeb) return false;
+
+    try {
+      final status = await Permission.notification.status;
+
+      return status.isGranted ||
+          status.isLimited ||
+          status.isProvisional;
+    } catch (e) {
+      debugPrint('Notification permission check failed: $e');
+      return false;
+    }
+  }
+
+  /// Opens the application's system settings.
+  ///
+  /// Useful when the user has permanently denied notifications.
+  Future<bool> openNotificationSettings() async {
+    if (kIsWeb) return false;
+
+    try {
+      return await openAppSettings();
+    } catch (e) {
+      debugPrint('Unable to open notification settings: $e');
+      return false;
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Daily check-in
+  // ---------------------------------------------------------------------------
+
+  /// Enables a daily YouMatter check-in.
+  ///
+  /// Default:
+  ///
+  ///     09:00
+  ///
+  /// The notification repeats every day at the requested local time.
+  Future<bool> enableDailyCheckIn({
+    int hour = 9,
+    int minute = 0,
+  }) async {
+    if (kIsWeb) return false;
+
+    if (!_isValidTime(hour, minute)) {
+      debugPrint(
+        'Invalid daily check-in time: $hour:$minute',
+      );
+
+      return false;
+    }
+
+    final allowed = await requestPermission();
+
+    if (!allowed) {
+      return false;
+    }
+
+    await initialize();
+
+    if (!_ready) {
+      return false;
+    }
+
+    try {
+      // Cancel first to ensure we never accidentally create duplicate
+      // scheduled notifications.
+      await _plugin.cancel(id: _dailyCheckInId);
+
+      await _plugin.zonedSchedule(
+        id: _dailyCheckInId,
+        title:
+        'How are you doing? ❤️',
+        body: _nextCheckInMessage(),
+        scheduledDate: _nextInstanceOf(hour, minute),
+        notificationDetails: _dailyCheckInDetails(),
+        androidScheduleMode:
+            AndroidScheduleMode.inexactAllowWhileIdle,
+        matchDateTimeComponents:
+            DateTimeComponents.time,
+        payload: 'daily_check_in',
+      );
+
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint(
+        'Daily check-in scheduling failed: $e\n$stackTrace',
+      );
+
+      return false;
+    }
+  }
+
+  /// Disables the daily check-in.
+  Future<void> disableDailyCheckIn() async {
+    if (kIsWeb) return;
+
+    await initialize();
+
+    if (!_ready) return;
+
+    try {
+      await _plugin.cancel(id: _dailyCheckInId);
+    } catch (e) {
+      debugPrint('Unable to cancel daily check-in: $e');
+    }
+  }
+
+  /// Reschedules the daily check-in to a new time.
+  Future<bool> rescheduleDailyCheckIn({
+    required int hour,
+    required int minute,
+  }) async {
+    return enableDailyCheckIn(
+      hour: hour,
+      minute: minute,
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Someone needs to talk
+  // ---------------------------------------------------------------------------
+
+  /// Shows a notification when a listener receives a new request.
+  Future<bool> showSomeoneNeedsTalk(String topic) async {
+    if (kIsWeb) return false;
+
+    final allowed = await areNotificationsAllowed();
+
+    if (!allowed) {
+      return false;
+    }
+
+    await initialize();
+
+    if (!_ready) {
+      return false;
+    }
+
+    final cleanedTopic = topic.trim();
+
+    final body = cleanedTopic.isEmpty
+        ? 'Someone is looking for a listener. Would you like to respond?'
+        : 'New request: "$cleanedTopic"';
+
+    try {
+      await _plugin.show(
+        id: _someoneNeedsTalkId,
+        title: 'Someone needs to talk 💬',
+        body: body,
+        notificationDetails: _someoneNeedsTalkDetails(),
+        payload: 'listener_offer',
+      );
+
+      return true;
+    } catch (e, stackTrace) {
+      debugPrint(
+        'Someone-needs-talk notification failed: $e\n$stackTrace',
+      );
+
+      return false;
+    }
+  }
+
+  /// Cancels an existing listener request notification.
+  Future<void> cancelSomeoneNeedsTalk() async {
+    if (kIsWeb) return;
+
+    await initialize();
+
+    if (!_ready) return;
+
+    try {
+      await _plugin.cancel(id: _someoneNeedsTalkId);
+    } catch (e) {
+      debugPrint(
+        'Unable to cancel listener notification: $e',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cancel everything
+  // ---------------------------------------------------------------------------
+
+  Future<void> cancelAllNotifications() async {
+    if (kIsWeb) return;
+
+    await initialize();
+
+    if (!_ready) return;
+
+    try {
+      await _plugin.cancelAll();
+    } catch (e) {
+      debugPrint(
+        'Unable to cancel all notifications: $e',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notification details
+  // ---------------------------------------------------------------------------
+
+  NotificationDetails _dailyCheckInDetails() {
+    return const NotificationDetails(
+      android: AndroidNotificationDetails(
+        _dailyCheckInChannelId,
+        _dailyCheckInChannelName,
+        channelDescription: _dailyCheckInChannelDescription,
+        importance: Importance.low,
+        priority: Priority.low,
+        playSound: false,
+        enableVibration: false,
+        icon: '@mipmap/ic_launcher',
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: false,
+        presentSound: false,
+      ),
+    );
+  }
+
+  NotificationDetails _someoneNeedsTalkDetails() {
+    return const NotificationDetails(
+      android: AndroidNotificationDetails(
+        _someoneNeedsTalkChannelId,
+        _someoneNeedsTalkChannelName,
+        channelDescription: _someoneNeedsTalkChannelDescription,
+        importance: Importance.high,
+        priority: Priority.high,
+        playSound: true,
+        enableVibration: true,
+        icon: '@mipmap/ic_launcher',
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+  }
+
+  // ---------------------------------------------------------------------------
+  // Notification tap handling
+  // ---------------------------------------------------------------------------
+
+  void _handleNotificationResponse(
+    NotificationResponse response,
+  ) {
+    try {
+      final payload = response.payload;
+
+      debugPrint(
+        'YouMatter notification tapped: $payload',
+      );
+
+      onNotificationTap?.call(payload);
+    } catch (e) {
+      debugPrint(
+        'Notification tap handling failed: $e',
+      );
+    }
+  }
+
+  // ---------------------------------------------------------------------------
+  // Message rotation
+  // ---------------------------------------------------------------------------
+
+  /// Returns the message assigned to the current calendar day.
+  ///
+  /// The same message is shown for everyone on the same day.
+  /// This avoids random messages changing between scheduling attempts.
+  String _nextCheckInMessage() {
+    final now = DateTime.now();
+
+    final dayNumber = _daysSinceEpoch(
+      DateTime(
+        now.year,
+        now.month,
+        now.day,
+      ),
+    );
+
+    final index = dayNumber % _checkInMessages.length;
+
+    return _checkInMessages[index];
+  }
+
+  int _daysSinceEpoch(DateTime date) {
+    final epoch = DateTime(1970, 1, 1);
+
+    return date.difference(epoch).inDays;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scheduling helpers
+  // ---------------------------------------------------------------------------
+
+  tz.TZDateTime _nextInstanceOf(
+    int hour,
+    int minute,
+  ) {
+    final now = tz.TZDateTime.now(tz.local);
+
+    var scheduled = tz.TZDateTime(
+      tz.local,
+      now.year,
+      now.month,
+      now.day,
+      hour,
+      minute,
+    );
+
+    if (!scheduled.isAfter(now)) {
+      scheduled = scheduled.add(
+        const Duration(days: 1),
+      );
+    }
+
+    return scheduled;
+  }
+
+  bool _isValidTime(
+    int hour,
+    int minute,
+  ) {
+    return hour >= 0 &&
+        hour <= 23 &&
+        minute >= 0 &&
+        minute <= 59;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Status
+  // ---------------------------------------------------------------------------
+
+  bool get isReady => _ready;
+}

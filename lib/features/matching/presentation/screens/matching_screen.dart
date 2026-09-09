@@ -2,6 +2,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
+// import 'package:youmatter_mobile/core/services/local_notification_service.dart';
 
 class MatchingScreen extends StatefulWidget {
   const MatchingScreen({super.key});
@@ -14,7 +15,8 @@ class _MatchingScreenState extends State<MatchingScreen> {
   final _api = ApiService();
   List<dynamic> _offers = [];
   bool _loading = true;
-    final Set<String> _busy = {};
+  final Set<String> _busy = {};
+  // final Set<String> _notifiedOfferIds = {};
 
   @override
   void initState() {
@@ -46,6 +48,20 @@ class _MatchingScreenState extends State<MatchingScreen> {
         _offers = offers;
         _loading = false;
       });
+
+      // NOTE: local notifications are temporarily disabled (see main.dart).
+      // Fire a "someone needs to talk" notification for newly-seen offers.
+      // for (final offer in offers) {
+      //   final map = offer as Map<String, dynamic>?;
+      //   if (map == null) continue;
+      //   final id = map['id']?.toString();
+      //   if (id == null || _notifiedOfferIds.contains(id)) continue;
+      //   _notifiedOfferIds.add(id);
+      //   final request = map['talk_request'] as Map<String, dynamic>?;
+      //   final topic = request?['topic']?.toString() ?? '';
+      //   LocalNotificationService.instance.showSomeoneNeedsTalk(topic);
+      // }
+
       await Future.delayed(const Duration(seconds: 5));
       if (mounted) _load();
     } catch (e) {

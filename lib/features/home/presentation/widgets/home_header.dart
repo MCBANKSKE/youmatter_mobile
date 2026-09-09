@@ -19,23 +19,14 @@ class HomeHeader extends StatelessWidget {
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         // YouMatter brand mark
-        Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Image.asset(
-              'assets/images/youmatterfavicon.png',
-              width: 36,
-              height: 36,
-            ),
-            const SizedBox(width: YouMatterSpacing.sm),
-            Text(
-              'YouMatter',
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.5,
-                  ),
-            ),
-          ],
+        Flexible(
+          child: Image.asset(
+            'assets/images/youmatterheaderlogo.png',
+            width: 150,
+            height: 116,
+            errorBuilder: (context, error, stackTrace) =>
+                const Icon(Icons.favorite, size: 112),
+          ),
         ),
         // Notification icon with badge
         Stack(

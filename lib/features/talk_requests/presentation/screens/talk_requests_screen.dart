@@ -225,19 +225,25 @@ class _TalkRequestsScreenState extends State<TalkRequestsScreen> {
             child: Column(
               children: [
                 RadioListTile<String>(
-                  title: const Text('💬 Text'),
-                  subtitle: const Text('Message back and forth'),
                   value: 'text',
+                  title: const Text('Text'),
+                  subtitle: const Text('Message back and forth'),
+                  secondary: const Icon(Icons.chat_bubble_outline_rounded),
+                  controlAffinity: ListTileControlAffinity.trailing,
                 ),
                 RadioListTile<String>(
-                  title: const Text('📞 Voice call'),
-                  subtitle: const Text('Talk in real-time'),
                   value: 'voice',
+                  title: const Text('Voice call'),
+                  subtitle: const Text('Talk in real-time'),
+                  secondary: const Icon(Icons.call_outlined),
+                  controlAffinity: ListTileControlAffinity.trailing,
                 ),
                 RadioListTile<String>(
-                  title: const Text('🔄 Either is fine'),
-                  subtitle: const Text("I'm open to both"),
                   value: 'either',
+                  title: const Text('Either is fine'),
+                  subtitle: const Text("I'm open to both"),
+                  secondary: const Icon(Icons.swap_horiz_rounded),
+                  controlAffinity: ListTileControlAffinity.trailing,
                 ),
               ],
             ),

@@ -38,11 +38,7 @@ final routerProvider = Provider<GoRouter>((ref) {
       final bool isPublicRoute =
           location == '/welcome' ||
           location == '/login' ||
-          location == '/register' ||
-          location.startsWith('/chat/') ||
-          location == '/notifications' ||
-          location == '/safety' ||
-          location == '/professional';
+          location == '/register';
 
       if (authState.isAuthenticated && isPublicRoute) {
         return '/home';

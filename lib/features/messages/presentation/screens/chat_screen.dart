@@ -236,10 +236,17 @@ class _ChatScreenState extends State<ChatScreen> {
                               Expanded(
                                 child: TextField(
                                   controller: _messageController,
+                                  minLines: 1,
+                                  maxLines: 5,
+                                  maxLength: 1000,
+                                  textCapitalization: TextCapitalization.sentences,
+                                  keyboardType: TextInputType.multiline,
+                                  textInputAction: TextInputAction.newline,
                                   decoration: const InputDecoration(
                                     hintText: 'Type a message…',
                                     border: OutlineInputBorder(),
                                     isDense: true,
+                                    counterText: '',
                                   ),
                                   onSubmitted: (_) => _send(),
                                 ),

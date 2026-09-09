@@ -165,4 +165,34 @@ class ApiService {
     final response = await _dioClient.dio.get('/me/professional');
     return response.data;
   }
+
+  // ---- Voice Calling ----
+
+  Future<Map<String, dynamic>> startCall(int conversationId) async {
+    final response = await _dioClient.dio.post(
+      '/conversations/$conversationId/calls',
+    );
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> acceptCall(int callId) async {
+    final response = await _dioClient.dio.post('/calls/$callId/accept');
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> declineCall(int callId) async {
+    final response = await _dioClient.dio.post('/calls/$callId/decline');
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> endCall(int callId) async {
+    final response = await _dioClient.dio.post('/calls/$callId/end');
+    return response.data;
+  }
+
+  Future<List<Map<String, dynamic>>> getIceServers() async {
+    final response = await _dioClient.dio.get('/calls/ice-servers');
+    final servers = response.data['ice_servers'] as List<dynamic>;
+    return servers.cast<Map<String, dynamic>>();
+  }
 }

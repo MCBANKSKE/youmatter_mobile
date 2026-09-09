@@ -19,17 +19,6 @@ class MyApp extends ConsumerWidget {
     // users land directly on the home screen instead of flashing the welcome
     // page.
     final bootstrap = ref.watch(authBootstrapProvider);
-    if (bootstrap.isLoading) {
-      return MaterialApp(
-        debugShowCheckedModeBanner: false,
-        title: AppConfig.appName,
-        theme: AppTheme.lightTheme,
-        darkTheme: AppTheme.darkTheme,
-        themeMode: ThemeMode.system,
-        home: const Scaffold(body: Center(child: CircularProgressIndicator())),
-      );
-    }
-
     final router = ref.watch(routerProvider);
 
     return MaterialApp.router(
@@ -40,6 +29,12 @@ class MyApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       routerConfig: router,
       restorationScopeId: 'app',
+      builder: (context, child) {
+        if (bootstrap.isLoading) {
+          return const Scaffold(body: Center(child: CircularProgressIndicator()));
+        }
+        return child ?? const SizedBox.shrink();
+      },
     );
   }
 }

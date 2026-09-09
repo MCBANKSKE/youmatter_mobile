@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
+import 'package:youmatter_mobile/features/calling/presentation/screens/outgoing_call_screen.dart';
 
 class ChatScreen extends StatefulWidget {
   final String conversationId;
@@ -168,10 +169,17 @@ class _ChatScreenState extends State<ChatScreen> {
   @override
   Widget build(BuildContext context) {
     final isActive = _conversation?['status'] == 'active';
+    final otherName = _getOtherName();
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Chat'),
+        title: Text(otherName),
         actions: [
+          if (isActive)
+            IconButton(
+              icon: const Icon(Icons.call),
+              onPressed: () => _startCall(otherName),
+              tooltip: 'Voice call',
+            ),
           if (isActive)
             TextButton(onPressed: _end, child: const Text('End')),
         ],
@@ -266,6 +274,45 @@ class _ChatScreenState extends State<ChatScreen> {
                   ],
                 ),
     );
+  }
+
+  /// Get the other participant's pseudonymous name.
+  String _getOtherName() {
+    if (_conversation == null || _myUserId == null) return 'Chat';
+    final key = _conversation!['talker_id'].toString() == _myUserId
+        ? 'listener'
+        : 'talker';
+    final other = _conversation![key] as Map<String, dynamic>?;
+    final identity = other?['pseudonymous_identity'] as Map<String, dynamic>?;
+    return (identity?['display_name'] ?? identity?['username'] ?? 'Anonymous')
+        .toString();
+  }
+
+  /// Start a voice call with the other participant.
+  Future<void> _startCall(String otherName) async {
+    final conversationId = int.tryParse(widget.conversationId);
+    if (conversationId == null) return;
+
+    final otherId = _getOtherUserId();
+    if (otherId == null) return;
+
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OutgoingCallScreen(
+          conversationId: conversationId,
+          remoteUserName: otherName,
+        ),
+      ),
+    );
+  }
+
+  int? _getOtherUserId() {
+    if (_conversation == null || _myUserId == null) return null;
+    final key = _conversation!['talker_id'].toString() == _myUserId
+        ? 'listener_id'
+        : 'talker_id';
+    final id = _conversation![key];
+    return id is int ? id : int.tryParse(id.toString());
   }
 }
 

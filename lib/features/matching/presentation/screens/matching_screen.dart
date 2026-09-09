@@ -14,7 +14,7 @@ class _MatchingScreenState extends State<MatchingScreen> {
   final _api = ApiService();
   List<dynamic> _offers = [];
   bool _loading = true;
-  Set<String> _busy = {};
+    final Set<String> _busy = {};
 
   @override
   void initState() {
@@ -127,7 +127,7 @@ class _MatchingScreenState extends State<MatchingScreen> {
                   child: ListView.separated(
                     padding: const EdgeInsets.all(16),
                     itemCount: _offers.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 12),
+                                        separatorBuilder: (_, _) => const SizedBox(height: 12),
                     itemBuilder: (context, index) {
                       final offer = _offers[index] as Map<String, dynamic>;
                       final request =

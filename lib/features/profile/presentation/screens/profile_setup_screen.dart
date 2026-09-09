@@ -40,8 +40,7 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         data['gender'] = _selectedGender!.toLowerCase();
       }
       if (_topicsController.text.trim().isNotEmpty) {
-        data['bio'] =
-            'Topics: ${_topicsController.text.trim()}';
+        data['bio'] = 'Topics: ${_topicsController.text.trim()}';
       }
       await api.updateProfile(data);
       if (!mounted) return;
@@ -52,7 +51,8 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Could not save profile, continuing anyway')),
+          content: Text('Could not save profile, continuing anyway'),
+        ),
       );
       context.go('/home');
     }
@@ -101,18 +101,26 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
                     'Preferred listener gender?',
                     style: Theme.of(context).textTheme.bodyLarge,
                   ),
-                  ...['Any', 'Female', 'Male', 'Non-binary'].map((gender) {
-                    return RadioListTile<String>(
-                      title: Text(gender),
-                      value: gender,
-                      groupValue: _selectedGender,
-                      onChanged: (value) {
-                        setState(() {
-                          _selectedGender = value;
-                        });
-                      },
-                    );
-                  }),
+                  RadioGroup<String>(
+                    groupValue: _selectedGender,
+                    onChanged: (value) {
+                      setState(() {
+                        _selectedGender = value;
+                      });
+                    },
+                    child: Column(
+                      children: [
+                        ...['Any', 'Female', 'Male', 'Non-binary'].map((
+                          gender,
+                        ) {
+                          return RadioListTile<String>(
+                            title: Text(gender),
+                            value: gender,
+                          );
+                        }),
+                      ],
+                    ),
+                  ),
                   const SizedBox(height: 16),
                   TextFormField(
                     controller: _ageController,

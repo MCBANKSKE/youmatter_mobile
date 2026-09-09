@@ -76,7 +76,7 @@ class _ConversationsListScreenState extends State<ConversationsListScreen> {
                   onRefresh: _load,
                   child: ListView.separated(
                     itemCount: _conversations.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                                        separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final conversation =
                           _conversations[index] as Map<String, dynamic>;

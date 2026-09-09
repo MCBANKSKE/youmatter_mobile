@@ -80,15 +80,15 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
       });
       if (!mounted) return;
       setState(() => _saving = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Profile saved')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Profile saved')));
     } catch (e) {
       if (!mounted) return;
       setState(() => _saving = false);
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-            content: Text('Could not save. Username may already be taken.')),
+          content: Text('Could not save. Username may already be taken.'),
+        ),
       );
     }
   }
@@ -159,7 +159,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   ),
                   const SizedBox(height: 16),
                   DropdownButtonFormField<String>(
-                    value: (_gender == null || _gender!.isEmpty)
+                    initialValue: (_gender == null || _gender!.isEmpty)
                         ? null
                         : _gender,
                     decoration: const InputDecoration(
@@ -170,7 +170,9 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                       DropdownMenuItem(value: 'female', child: Text('Female')),
                       DropdownMenuItem(value: 'male', child: Text('Male')),
                       DropdownMenuItem(
-                          value: 'non-binary', child: Text('Non-binary')),
+                        value: 'non-binary',
+                        child: Text('Non-binary'),
+                      ),
                     ],
                     onChanged: (v) => setState(() => _gender = v),
                   ),
@@ -192,8 +194,7 @@ class _ProfileScreenState extends ConsumerState<ProfileScreen> {
                   OutlinedButton(
                     onPressed: _logout,
                     style: OutlinedButton.styleFrom(
-                      foregroundColor:
-                          Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.error,
                     ),
                     child: const Text('Log out'),
                   ),

@@ -91,7 +91,7 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                   onRefresh: _load,
                   child: ListView.separated(
                     itemCount: _notifications.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1),
+                                        separatorBuilder: (_, _) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final notification =
                           _notifications[index] as Map<String, dynamic>;

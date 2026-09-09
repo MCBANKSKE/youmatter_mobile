@@ -14,6 +14,7 @@ class _TalkRequestsScreenState extends State<TalkRequestsScreen> {
   final _topicController = TextEditingController();
   final _descriptionController = TextEditingController();
   String _preference = 'anyone';
+  String _communicationMethod = 'either';
   Map<String, dynamic>? _current;
   bool _loading = true;
   bool _submitting = false;
@@ -56,15 +57,15 @@ class _TalkRequestsScreenState extends State<TalkRequestsScreen> {
 
   Future<void> _create() async {
     if (_topicController.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please enter a topic')),
-      );
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('Please enter a topic')));
       return;
     }
     setState(() => _submitting = true);
     try {
       await _api.createTalkRequest({
         'preference': _preference,
+        'communication_method': _communicationMethod,
         'topic': _topicController.text.trim(),
         'description': _descriptionController.text.trim(),
       });
@@ -164,8 +165,7 @@ class _TalkRequestsScreenState extends State<TalkRequestsScreen> {
                     const SizedBox(height: 8),
                     Text('Topic: ${current['topic'] ?? ''}'),
                     const SizedBox(height: 8),
-                    if (status == 'searching')
-                      const LinearProgressIndicator(),
+                    if (status == 'searching') const LinearProgressIndicator(),
                     if (status == 'matched') ...[
                       const SizedBox(height: 16),
                       ElevatedButton(
@@ -197,18 +197,50 @@ class _TalkRequestsScreenState extends State<TalkRequestsScreen> {
             'Who would you like to talk to?',
             style: Theme.of(context).textTheme.titleMedium,
           ),
-          RadioListTile<String>(
-            title: const Text('Anyone'),
-            value: 'anyone',
+          RadioGroup<String>(
             groupValue: _preference,
             onChanged: (v) => setState(() => _preference = v ?? 'anyone'),
+            child: Column(
+              children: [
+                RadioListTile<String>(
+                  title: const Text('Anyone'),
+                  value: 'anyone',
+                ),
+                RadioListTile<String>(
+                  title: const Text('A professional'),
+                  value: 'professional',
+                ),
+              ],
+            ),
           ),
-          RadioListTile<String>(
-            title: const Text('A professional'),
-            value: 'professional',
-            groupValue: _preference,
+          const SizedBox(height: 16),
+          Text(
+            'How would you like to connect?',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+          RadioGroup<String>(
+            groupValue: _communicationMethod,
             onChanged: (v) =>
-                setState(() => _preference = v ?? 'professional'),
+                setState(() => _communicationMethod = v ?? 'text'),
+            child: Column(
+              children: [
+                RadioListTile<String>(
+                  title: const Text('💬 Text'),
+                  subtitle: const Text('Message back and forth'),
+                  value: 'text',
+                ),
+                RadioListTile<String>(
+                  title: const Text('📞 Voice call'),
+                  subtitle: const Text('Talk in real-time'),
+                  value: 'voice',
+                ),
+                RadioListTile<String>(
+                  title: const Text('🔄 Either is fine'),
+                  subtitle: const Text("I'm open to both"),
+                  value: 'either',
+                ),
+              ],
+            ),
           ),
           const SizedBox(height: 16),
           TextFormField(

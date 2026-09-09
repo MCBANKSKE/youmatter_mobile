@@ -16,17 +16,33 @@ import '../features/messages/presentation/screens/chat_screen.dart';
 import '../features/notifications/presentation/screens/notifications_screen.dart';
 import '../features/safety/presentation/screens/safety_screen.dart';
 import '../features/professional/presentation/screens/professional_screen.dart';
+import '../features/calling/presentation/screens/active_call_screen.dart';
+// ignore: unused_import
+import '../features/calling/presentation/screens/incoming_call_screen.dart';
+import '../features/calling/presentation/screens/outgoing_call_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   final authState = ref.watch(authStateProvider);
 
   return GoRouter(
-    initialLocation: authState.isAuthenticated ? '/home' : '/welcome',
+    initialLocation: '/welcome',
     redirect: (BuildContext context, GoRouterState state) {
+      final String location = state.uri.path.isEmpty
+          ? '/'
+          : state.uri.path;
+
+      if (location == '/') {
+        return authState.isAuthenticated ? '/home' : '/welcome';
+      }
+
       final bool isPublicRoute =
-          state.matchedLocation == '/welcome' ||
-          state.matchedLocation == '/login' ||
-          state.matchedLocation == '/register';
+          location == '/welcome' ||
+          location == '/login' ||
+          location == '/register' ||
+          location.startsWith('/chat/') ||
+          location == '/notifications' ||
+          location == '/safety' ||
+          location == '/professional';
 
       if (authState.isAuthenticated && isPublicRoute) {
         return '/home';
@@ -79,6 +95,28 @@ final routerProvider = Provider<GoRouter>((ref) {
           final conversationId =
               state.pathParameters['conversationId'] ?? '';
           return ChatScreen(conversationId: conversationId);
+        },
+      ),
+      GoRoute(
+        path: '/call/outgoing/:conversationId',
+        builder: (context, state) {
+          final conversationId =
+              state.pathParameters['conversationId'] ?? '';
+          return OutgoingCallScreen(
+            conversationId: int.parse(conversationId),
+            remoteUserName: 'Listener',
+          );
+        },
+      ),
+      GoRoute(
+        path: '/call/active/:conversationId',
+        builder: (context, state) {
+          final conversationId =
+              state.pathParameters['conversationId'] ?? '';
+          return ActiveCallScreen(
+            conversationId: int.parse(conversationId),
+            remoteUserName: 'Listener',
+          );
         },
       ),
       GoRoute(

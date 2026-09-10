@@ -6,7 +6,7 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/core/services/auth_service.dart';
 import 'package:youmatter_mobile/features/calling/models/call_state.dart';
-import 'package:youmatter_mobile/features/calling/services/call_signaling_service.dart';
+import 'package:youmatter_mobile/features/calling/services/call_signaling_coordinator.dart';
 import 'package:youmatter_mobile/features/calling/services/webrtc_service.dart';
 
 /// Provider for the WebRTC service instance.
@@ -16,11 +16,15 @@ final webRTCServiceProvider = Provider<WebRTCService>((ref) {
   return service;
 });
 
-/// Provider for the call signaling service.
-final callSignalingServiceProvider = Provider<CallSignalingService>((ref) {
-  final service = CallSignalingService();
-  ref.onDispose(service.disconnect);
-  return service;
+/// Provider for the call signaling coordinator (Pusher with polling fallback).
+///
+/// Consumers bind to these callbacks and call `subscribeToConversation` /
+/// `unsubscribeFromConversation` as if it were a single transport; the
+/// coordinator chooses the best transport automatically.
+final callSignalingServiceProvider = Provider<CallSignalingCoordinator>((ref) {
+  final coordinator = CallSignalingCoordinator();
+  ref.onDispose(() => coordinator.dispose());
+  return coordinator;
 });
 
 /// Deadline applied while ringing/connecting so failed or abandoned calls
@@ -176,7 +180,9 @@ class CallStateNotifier extends StateNotifier<CallState> {
       if (state.status == CallStatus.ringing) {
         state = state.copyWith(remoteUserName: name);
       }
-    } catch (e) {}
+    } catch (e) {
+      // Best-effort; a missing caller name should not break the call flow.
+    }
   }
 
   Future<void> acceptCall() async {
@@ -276,7 +282,10 @@ class CallStateNotifier extends StateNotifier<CallState> {
   Future<void> _sendSignal(int callId, Map<String, dynamic> body) async {
     try {
       await _api.sendSignal(callId, body);
-    } catch (e) {}
+    } catch (e) {
+      // The call will surface a connection error via the call timer; do not
+      // spam the user with signal-relay failures.
+    }
   }
 
   void _startCallTimer() {
@@ -284,10 +293,11 @@ class CallStateNotifier extends StateNotifier<CallState> {
     _callTimer = Timer(_callTimeout, () async {
       final s = state.status;
       if (s == CallStatus.ringing || s == CallStatus.connecting) {
-        if (state.isIncoming)
+        if (state.isIncoming) {
           await declineCall();
-        else
+        } else {
           await endCall();
+        }
       }
     });
   }
@@ -298,7 +308,9 @@ class CallStateNotifier extends StateNotifier<CallState> {
     final callId = state.callId;
     try {
       if (callId != null) await _api.endCall(callId);
-    } catch (e) {}
+    } catch (e) {
+      // Proceed with local teardown even if the server request fails.
+    }
     await _teardownLocal();
   }
 
@@ -306,7 +318,9 @@ class CallStateNotifier extends StateNotifier<CallState> {
     final callId = state.callId;
     try {
       if (callId != null) await _api.declineCall(callId);
-    } catch (e) {}
+    } catch (e) {
+      // Proceed with local teardown even if the server request fails.
+    }
     await _teardownLocal();
   }
 

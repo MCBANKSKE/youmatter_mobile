@@ -92,7 +92,8 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
     dynamic myUserId,
   ) {
     final myId = myUserId?.toString() ?? '';
-    return data.map((item) {
+    final deduped = _dedupeConversations(data, myId);
+    return deduped.map((item) {
       final map = item as Map<String, dynamic>;
             final isActive = map['status'] == 'active';
       final talkerId = map['talker_id']?.toString() ?? '';
@@ -127,6 +128,33 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
         remoteUserId: _extractRemoteUserId(map, myId),
       );
     }).toList();
+  }
+
+  /// Collapse multiple conversations with the same peer into one, keeping the
+  /// first (active / most recent) thread per person.
+  List<dynamic> _dedupeConversations(List<dynamic> data, String myId) {
+    if (data.length < 2) return data;
+    final seen = <String, dynamic>{};
+    final result = <dynamic>[];
+    for (final raw in data) {
+      final map = raw as Map<String, dynamic>;
+      final remoteId = _extractRemoteUserId(map, myId);
+      if (remoteId == null) {
+        result.add(raw);
+        continue;
+      }
+      final peerKey = remoteId.toString();
+      if (seen.containsKey(peerKey)) {
+        final existing = seen[peerKey] as Map<String, dynamic>;
+        if (map['status'] == 'active' && existing['status'] != 'active') {
+          seen[peerKey] = map;
+        }
+        continue;
+      }
+      seen[peerKey] = map;
+      result.add(raw);
+    }
+    return result;
   }
 
   Future<TalkRequestInfo?> _getCurrentTalkRequest() async {

@@ -29,13 +29,44 @@ class _ConversationsListScreenState extends State<ConversationsListScreen> {
       if (!mounted) return;
       setState(() {
         _myUserId = me['id'].toString();
-        _conversations = conversations;
+        _conversations = _dedupe(conversations);
         _loading = false;
       });
     } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
     }
+  }
+
+  /// Collapse multiple conversations with the same person into a single row
+  /// (an active conversation wins; otherwise the first / most recent is kept).
+  /// This guards against the backend returning more than one thread per peer.
+  List<dynamic> _dedupe(List<dynamic> conversations) {
+    if (conversations.length < 2) return conversations;
+    final myId = _myUserId ?? '';
+    final seen = <String, dynamic>{};
+    final result = <dynamic>[];
+
+    for (final raw in conversations) {
+      final conv = raw as Map<String, dynamic>;
+      final talkerId = conv['talker_id']?.toString() ?? '';
+      final peerKey = talkerId == myId ? 'listener_id' : 'talker_id';
+      final peerId = conv[peerKey]?.toString() ?? '';
+      if (peerId == '' || peerId == myId) {
+        result.add(raw);
+        continue;
+      }
+      if (seen.containsKey(peerId)) {
+        final existing = seen[peerId] as Map<String, dynamic>;
+        if (conv['status'] == 'active' && existing['status'] != 'active') {
+          seen[peerId] = conv;
+        }
+        continue;
+      }
+      seen[peerId] = conv;
+      result.add(raw);
+    }
+    return result;
   }
 
   String _otherName(Map<String, dynamic> conversation) {

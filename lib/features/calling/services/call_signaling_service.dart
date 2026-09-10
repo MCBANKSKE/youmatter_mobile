@@ -6,7 +6,9 @@ import 'package:youmatter_mobile/core/config/app_config.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/core/services/auth_service.dart';
 
-/// Service that handles call signaling over the Reverb WebSocket.
+import 'call_transport.dart';
+
+/// Pusher / Reverb WebSocket transport for call signaling.
 ///
 /// Translates between the WebRTC service and the Laravel backend:
 /// - Authenticates private conversation channels through Laravel's signed
@@ -16,7 +18,7 @@ import 'package:youmatter_mobile/core/services/auth_service.dart';
 ///
 /// Sending signaling payloads is done over REST (see `ApiService.sendSignal`)
 /// because Reverb does not accept client-published messages.
-class CallSignalingService {
+class CallSignalingService extends CallTransport {
   final AuthService _authService = AuthService();
   final ApiService _api = ApiService();
 
@@ -27,28 +29,31 @@ class CallSignalingService {
   final Set<String> _subscribedChannels = {};
   final List<String> _pendingChannels = [];
 
-  /// Broadcast event callbacks. Payloads match the backend broadcastWith
-  /// shape (e.g. `{from_user_id, offer}` / `{id, initiated_by, ...}`).
-  void Function(Map<String, dynamic> data)? onIncomingCall;
-  void Function(Map<String, dynamic> data)? onOffer;
-  void Function(Map<String, dynamic> data)? onAnswer;
-  void Function(Map<String, dynamic> data)? onIceCandidate;
-  void Function(Map<String, dynamic> data)? onCallAccepted;
-  void Function(Map<String, dynamic> data)? onCallDeclined;
-  void Function(Map<String, dynamic> data)? onCallEnded;
+  @override
+  String get name => 'pusher';
 
   bool get isConnected => _isConnected;
 
-  /// Connect to the Reverb WebSocket for signaling.
-  Future<void> connect() async {
+  @override
+  bool get isReady => _isConnected;
+
+  /// Connect to the Pusher-compatible WebSocket for signaling.
+  ///
+  /// Throws (instead of silently resetting) when the connection cannot be
+  /// established within [timeout], so the coordinator can fall back to polling.
+  @override
+  Future<void> connect({Duration timeout = const Duration(seconds: 8)}) async {
     if (_isConnected) return;
 
     final token = await _authService.getToken();
-    if (token == null) return;
+    if (token == null) {
+      throw StateError('No session token for signaling socket.');
+    }
 
     try {
       final wsUrl = '${AppConfig.wsUrl}/app/${AppConfig.reverbAppKey}'
-          '?protocol=7&client=flutter&version=1.0.0';
+          '?protocol=7&client=flutter&version=1.0.0'
+          '&authToken=$token';
 
       final channel = WebSocketChannel.connect(Uri.parse(wsUrl));
       _channel = channel;
@@ -57,16 +62,23 @@ class CallSignalingService {
         onError: (Object error) => _reset(),
         onDone: _reset,
       );
+
+      // Wait for the server handshake so a failure is reported here instead of
+      // being swallowed by the stream listener.
+      await channel.ready.timeout(timeout);
     } catch (e) {
       _reset();
+      rethrow;
     }
   }
 
   /// Subscribe to a conversation's private channel for call signaling.
+  @override
   Future<void> subscribeToConversation(String conversationId) =>
       _subscribe('conversation.$conversationId');
 
   /// Unsubscribe from a conversation channel (e.g. when a call ends).
+  @override
   void unsubscribeFromConversation(String? conversationId) {
     if (conversationId == null) return;
     final channelName = 'conversation.$conversationId';
@@ -165,23 +177,7 @@ class CallSignalingService {
     String? event,
     Map<String, dynamic>? payload,
   ) {
-    if (event == null || payload == null) return;
-
-    if (event.endsWith('IncomingCall')) {
-      onIncomingCall?.call(payload);
-    } else if (event.endsWith('WebRtcOffer')) {
-      onOffer?.call(payload);
-    } else if (event.endsWith('WebRtcAnswer')) {
-      onAnswer?.call(payload);
-    } else if (event.endsWith('IceCandidate')) {
-      onIceCandidate?.call(payload);
-    } else if (event.endsWith('CallAccepted')) {
-      onCallAccepted?.call(payload);
-    } else if (event.endsWith('CallDeclined')) {
-      onCallDeclined?.call(payload);
-    } else if (event.endsWith('CallEnded')) {
-      onCallEnded?.call(payload);
-    }
+    routeCallEvent(this, event, payload);
   }
 
   /// Pusher protocol wraps broadcast payloads as a JSON-encoded string.
@@ -210,5 +206,10 @@ class CallSignalingService {
     _channel = null;
     _reset();
     _pendingChannels.clear();
+  }
+
+  @override
+  Future<void> dispose() async {
+    disconnect();
   }
 }

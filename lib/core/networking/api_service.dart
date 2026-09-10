@@ -205,6 +205,30 @@ class ApiService {
     await _dioClient.dio.post('/calls/$callId/signal', data: body);
   }
 
+  /// Poll the current call state for a conversation (signaling fallback).
+  /// Returns the active call (or `null` when none is in progress).
+  Future<Map<String, dynamic>?> getCallState(String conversationId) async {
+    final response = await _dioClient.dio.get(
+      '/calls/$conversationId/state',
+    );
+    return response.data['call'] as Map<String, dynamic>?;
+  }
+
+  /// Drain pending signaling messages for a call (signaling fallback).
+  /// Returns `(messages, lastId)`.
+  Future<(List<dynamic>, int)> getCallSignals(
+    int callId,
+    int afterId,
+  ) async {
+    final response = await _dioClient.dio.get(
+      '/calls/$callId/signals',
+      queryParameters: {'after_id': afterId.toString()},
+    );
+    final messages = response.data['messages'] as List<dynamic>? ?? [];
+    final lastId = response.data['last_id'] as int? ?? 0;
+    return (messages, lastId);
+  }
+
   /// Authorize a private broadcast channel for the current socket. Returns
   /// the signed auth string (`appKey:signature`) the Reverb client sends when
   /// subscribing to a private channel.

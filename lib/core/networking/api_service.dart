@@ -84,6 +84,14 @@ class ApiService {
     await _dioClient.dio.post('/conversations/$id/end');
   }
 
+  /// Extend conversation by 15 minutes
+  /// Returns the new expiry time
+  Future<DateTime> extendConversation(String id) async {
+    final response = await _dioClient.dio.post('/conversations/$id/extend');
+    final expiresAt = response.data['expires_at'] as String;
+    return DateTime.parse(expiresAt);
+  }
+
   Future<List<dynamic>> getMessages(String conversationId) async {
     final response = await _dioClient.dio.get(
       '/conversations/$conversationId/messages',
@@ -108,8 +116,12 @@ class ApiService {
     int? duration,
     String body = 'Voice message',
   }) async {
+    // Step 1: Create a placeholder message
+    final message = await sendMessage(conversationId, body);
+    final messageId = message['id'].toString();
+
+    // Step 2: Upload the audio file to the message
     final formData = FormData.fromMap({
-      'body': body,
       if (duration != null) 'duration': duration,
       'audio': await MultipartFile.fromFile(
         filePath,
@@ -117,10 +129,12 @@ class ApiService {
       ),
     });
     final response = await _dioClient.dio.post(
-      '/conversations/$conversationId/messages',
+      '/conversations/$conversationId/messages/$messageId/audio',
       data: formData,
     );
-    return response.data;
+
+    // Return the updated message with audio
+    return response.data['message'] ?? message;
   }
 
   Future<List<dynamic>> getNotifications() async {

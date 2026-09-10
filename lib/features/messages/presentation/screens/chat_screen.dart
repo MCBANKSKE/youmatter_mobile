@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/features/calling/providers/call_state_provider.dart';
+import 'package:youmatter_mobile/features/messaging/presentation/widgets/conversation_timer_widget.dart';
 
 // ---------------------------------------------------------------------------
 // Chat Screen
@@ -42,6 +43,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Timer? _pollTimer;
   bool _signalingInitialized = false;
+
+  // Conversation expiry time
+  DateTime? _expiryTime;
 
   @override
   void initState() {
@@ -95,12 +99,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       final messages = await _api.getMessages(widget.conversationId);
 
       if (!mounted) return;
+
+      // Extract expiry time from conversation
+      DateTime? expiryTime;
+      if (conversation['expires_at'] != null) {
+        expiryTime = DateTime.parse(conversation['expires_at']);
+      }
+
       setState(() {
         _myUserId = me['id'].toString();
         _conversation = conversation;
         _messages = messages.reversed.toList();
         _loading = false;
         _error = null;
+        _expiryTime = expiryTime;
       });
       _scrollToBottom();
     } catch (e) {
@@ -109,6 +121,33 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         _loading = false;
         _error = 'Could not load this conversation.';
       });
+    }
+  }
+
+  /// Handle conversation extension
+  Future<void> _handleExtendConversation() async {
+    try {
+      final newExpiryTime = await _api.extendConversation(widget.conversationId);
+      if (mounted) {
+        setState(() {
+          _expiryTime = newExpiryTime;
+        });
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Conversation extended by 15 minutes'),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to extend conversation: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -510,6 +549,14 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
                     ],
                   ),
                 ),
+                // Conversation timer (compact)
+                if (_isActive && _expiryTime != null) ...[
+                  ConversationTimerCompact(
+                    conversationId: int.parse(widget.conversationId),
+                    expiryTime: _expiryTime!,
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 if (_isActive) ...[
                   Container(
                     width: 8,
@@ -544,6 +591,13 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           ),
         ),
+        // Conversation timer (full with progress bar)
+        if (_isActive && _expiryTime != null)
+          ConversationTimerWidget(
+            conversationId: int.parse(widget.conversationId),
+            expiryTime: _expiryTime!,
+            onExtend: _handleExtendConversation,
+          ),
         Expanded(
           child: _isActive
               ? _buildConversation(context, theme, showStartBanner)

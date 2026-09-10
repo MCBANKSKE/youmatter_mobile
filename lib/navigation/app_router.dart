@@ -17,8 +17,6 @@ import '../features/notifications/presentation/screens/notifications_screen.dart
 import '../features/safety/presentation/screens/safety_screen.dart';
 import '../features/professional/presentation/screens/professional_screen.dart';
 import '../features/calling/presentation/screens/active_call_screen.dart';
-// ignore: unused_import
-import '../features/calling/presentation/screens/incoming_call_screen.dart';
 import '../features/calling/presentation/screens/outgoing_call_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {

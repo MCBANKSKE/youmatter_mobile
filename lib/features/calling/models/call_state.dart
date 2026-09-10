@@ -15,8 +15,9 @@ class CallState {
     this.conversationId,
     this.remoteUserId,
     this.remoteUserName,
-    this.isMuted = false,
+           this.isMuted = false,
     this.isSpeakerOn = false,
+    this.isIncoming = false,
     this.startedAt,
     this.errorMessage,
   });
@@ -28,6 +29,7 @@ class CallState {
   final String? remoteUserName;
   final bool isMuted;
   final bool isSpeakerOn;
+  final bool isIncoming;
   final DateTime? startedAt;
   final String? errorMessage;
 
@@ -41,8 +43,9 @@ class CallState {
     int? conversationId,
     int? remoteUserId,
     String? remoteUserName,
-    bool? isMuted,
+        bool? isMuted,
     bool? isSpeakerOn,
+    bool? isIncoming,
     DateTime? startedAt,
     String? errorMessage,
   }) {
@@ -54,6 +57,7 @@ class CallState {
       remoteUserName: remoteUserName ?? this.remoteUserName,
       isMuted: isMuted ?? this.isMuted,
       isSpeakerOn: isSpeakerOn ?? this.isSpeakerOn,
+      isIncoming: isIncoming ?? this.isIncoming,
       startedAt: startedAt ?? this.startedAt,
       errorMessage: errorMessage ?? this.errorMessage,
     );

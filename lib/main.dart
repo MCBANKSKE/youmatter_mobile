@@ -4,6 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'core/config/app_config.dart';
 import 'core/theme/app_theme.dart';
 import 'features/authentication/providers/auth_provider.dart';
+import 'features/calling/models/call_state.dart';
+import 'features/calling/presentation/screens/active_call_screen.dart';
+import 'features/calling/presentation/screens/incoming_call_screen.dart';
+import 'features/calling/presentation/screens/outgoing_call_screen.dart';
+import 'features/calling/providers/call_state_provider.dart';
 import 'navigation/app_router.dart';
 
 // NOTE: local notifications are temporarily disabled (build issues with
@@ -29,7 +34,8 @@ class MyApp extends ConsumerWidget {
     // users land directly on the home screen instead of flashing the welcome
     // page.
     final bootstrap = ref.watch(authBootstrapProvider);
-    final router = ref.watch(routerProvider);
+        final router = ref.watch(routerProvider);
+    final callState = ref.watch(callStateProvider);
 
     return MaterialApp.router(
       title: AppConfig.appName,
@@ -39,11 +45,34 @@ class MyApp extends ConsumerWidget {
       themeMode: ThemeMode.system,
       routerConfig: router,
       restorationScopeId: 'app',
-      builder: (context, child) {
+            builder: (context, child) {
         if (bootstrap.isLoading) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
-        return child ?? const SizedBox.shrink();
+        return Stack(
+          children: [
+            child ?? const SizedBox.shrink(),
+            // Active calls and incoming/outgoing ringing screens are
+            // rendered here so they can surface from anywhere in the app.
+            if (callState.status == CallStatus.ringing && callState.isIncoming)
+              IncomingCallScreen(
+                callId: callState.callId ?? 0,
+                conversationId: callState.conversationId ?? 0,
+                remoteUserName: callState.remoteUserName ?? 'Anonymous',
+              ),
+            if (callState.status == CallStatus.ringing && !callState.isIncoming)
+              OutgoingCallScreen(
+                conversationId: callState.conversationId ?? 0,
+                remoteUserName: callState.remoteUserName ?? 'Anonymous',
+              ),
+            if (callState.status == CallStatus.connecting ||
+                callState.status == CallStatus.active)
+              ActiveCallScreen(
+                conversationId: callState.conversationId ?? 0,
+                remoteUserName: callState.remoteUserName ?? 'Anonymous',
+              ),
+          ],
+        );
       },
     );
   }

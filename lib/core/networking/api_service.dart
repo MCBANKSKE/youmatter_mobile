@@ -190,9 +190,32 @@ class ApiService {
     return response.data;
   }
 
-  Future<List<Map<String, dynamic>>> getIceServers() async {
+    Future<List<Map<String, dynamic>>> getIceServers() async {
     final response = await _dioClient.dio.get('/calls/ice-servers');
     final servers = response.data['ice_servers'] as List<dynamic>;
     return servers.cast<Map<String, dynamic>>();
+  }
+
+  // ---- Voice Calling (WebRTC signaling) ----
+
+  /// Relay a WebRTC signaling payload (offer / answer / ICE candidate) for a
+  /// call. The backend validates participation and broadcasts it to the
+  /// private conversation channel.
+  Future<void> sendSignal(int callId, Map<String, dynamic> body) async {
+    await _dioClient.dio.post('/calls/$callId/signal', data: body);
+  }
+
+  /// Authorize a private broadcast channel for the current socket. Returns
+  /// the signed auth string (`appKey:signature`) the Reverb client sends when
+  /// subscribing to a private channel.
+  Future<Map<String, dynamic>> authorizeChannel(
+    String socketId,
+    String channelName,
+  ) async {
+    final response = await _dioClient.dio.post(
+      '/broadcasting/auth',
+      data: {'socket_id': socketId, 'channel_name': channelName},
+    );
+    return response.data as Map<String, dynamic>;
   }
 }

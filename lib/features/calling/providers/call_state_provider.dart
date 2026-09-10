@@ -1,10 +1,13 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
-import 'package:youmatter_mobile/features/calling/models/call_state.dart';
-import 'package:youmatter_mobile/features/calling/services/webrtc_service.dart';
-import 'package:youmatter_mobile/features/calling/services/call_signaling_service.dart';
+import 'package:flutter_webrtc/flutter_webrtc.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/core/services/auth_service.dart';
+import 'package:youmatter_mobile/features/calling/models/call_state.dart';
+import 'package:youmatter_mobile/features/calling/services/call_signaling_service.dart';
+import 'package:youmatter_mobile/features/calling/services/webrtc_service.dart';
 
 /// Provider for the WebRTC service instance.
 final webRTCServiceProvider = Provider<WebRTCService>((ref) {
@@ -15,31 +18,83 @@ final webRTCServiceProvider = Provider<WebRTCService>((ref) {
 
 /// Provider for the call signaling service.
 final callSignalingServiceProvider = Provider<CallSignalingService>((ref) {
-  return CallSignalingService();
+  final service = CallSignalingService();
+  ref.onDispose(service.disconnect);
+  return service;
 });
+
+/// Deadline applied while ringing/connecting so failed or abandoned calls
+/// do not leave the app stuck on a call screen.
+const Duration _callTimeout = Duration(seconds: 45);
 
 /// Provider for call state management.
 class CallStateNotifier extends StateNotifier<CallState> {
-  CallStateNotifier(this._ref) : super(const CallState());
+  CallStateNotifier(this._ref) : super(const CallState()) { _bindSignaling(); }
 
   final Ref _ref;
   final ApiService _api = ApiService();
   final AuthService _authService = AuthService();
 
-  /// Initialize ICE servers and signaling.
-  Future<void> initialize() async {
-    try {
-      final iceServers = await _api.getIceServers();
-      final webrtc = _ref.read(webRTCServiceProvider);
-      await webrtc.initialize(iceServers);
+  List<Map<String, dynamic>>? _iceServers;
+  Map<String, dynamic>? _remoteOffer;
+  bool _answerPending = false;
+  bool _isInitialized = false;
+  int? _cachedUserId;
+  Timer? _callTimer;
 
-      final signaling = _ref.read(callSignalingServiceProvider);
-      await signaling.connect();
+  void _bindSignaling() {
+    _ref.read(callSignalingServiceProvider)
+      ..onIncomingCall = _onIncomingCall
+      ..onOffer = _onOfferReceived
+      ..onAnswer = _onAnswerReceived
+      ..onIceCandidate = _onIceCandidateReceived
+      ..onCallAccepted = _onCallAccepted
+      ..onCallDeclined = _onCallDeclined
+      ..onCallEnded = _onCallEndedRemote;
+  }
+
+  void _bindWebRtcCallbacks() {
+    _ref.read(webRTCServiceProvider)
+      ..onLocalIceCandidate = _sendLocalIceCandidate
+      ..onConnectionStateChanged = _onPeerConnectionState;
+  }
+
+  /// Fetch ICE servers and open the signaling WebSocket (once).
+  Future<void> initialize() async {
+    if (!await _ensureInitialized()) return;
+  }
+
+  Future<bool> _ensureInitialized() async {
+    if (_isInitialized) return true;
+    try {
+      _iceServers = await _api.getIceServers();
+      await _ref.read(callSignalingServiceProvider).connect();
+      _isInitialized = true;
+      return true;
     } catch (e) {
+      _isInitialized = false;
       state = state.copyWith(
         status: CallStatus.ended,
         errorMessage: 'Failed to initialize call: $e',
       );
+      return false;
+    }
+  }
+
+  Future<bool> _ensureWebRtcReady() async {
+    if (!await _ensureInitialized()) return false;
+    final iceServers = _iceServers;
+    if (iceServers == null) return false;
+    try {
+      await _ref.read(webRTCServiceProvider).initialize(iceServers);
+      _bindWebRtcCallbacks();
+      return true;
+    } catch (e) {
+      state = state.copyWith(
+        status: CallStatus.ended,
+        errorMessage: 'Microphone unavailable: $e',
+      );
+      return false;
     }
   }
 
@@ -49,131 +104,298 @@ class CallStateNotifier extends StateNotifier<CallState> {
     required int remoteUserId,
     required String remoteUserName,
   }) async {
+    if (!_isIdle()) return;
+    if (!await _ensureWebRtcReady()) return;
+
+    state = state.copyWith(
+            status: CallStatus.ringing,
+      conversationId: conversationId,
+      remoteUserId: remoteUserId,
+      remoteUserName: remoteUserName,
+      isIncoming: false,
+    );
     try {
-      state = state.copyWith(
-        status: CallStatus.ringing,
-        conversationId: conversationId,
-        remoteUserId: remoteUserId,
-        remoteUserName: remoteUserName,
-      );
+      await _ref
+          .read(callSignalingServiceProvider)
+          .subscribeToConversation(conversationId.toString());
 
-      // Subscribe to conversation channel for signaling.
-      final signaling = _ref.read(callSignalingServiceProvider);
-      signaling.subscribeToConversation(conversationId.toString());
-
-      // Create WebRTC offer.
-      final webrtc = _ref.read(webRTCServiceProvider);
-      final offer = await webrtc.createOffer();
-
-      // Send offer via signaling.
-      signaling.sendOffer(
-        conversationId: conversationId,
-        offer: offer,
-        fromUserId: await _getCurrentUserId(),
-      );
-
-      // Notify backend.
       final call = await _api.startCall(conversationId);
-      state = state.copyWith(callId: call['id'], status: CallStatus.connecting);
+      final callId = int.tryParse(call['id'].toString());
+      if (callId == null) throw Exception('Call session id missing.');
+      state = state.copyWith(callId: callId);
+
+      final offer = await _ref.read(webRTCServiceProvider).createOffer();
+      await _sendSignal(callId, {'event': 'offer', 'offer': offer});
+      _startCallTimer();
     } catch (e) {
       state = state.copyWith(
         status: CallStatus.ended,
         errorMessage: 'Failed to start call: $e',
       );
+      await _teardownLocal();
     }
   }
 
-  /// Accept an incoming call.
-  Future<void> acceptCall() async {
+  Future<void> _onIncomingCall(Map<String, dynamic> data) async {
+    final callId = int.tryParse(data['id'].toString());
+    final conversationId = int.tryParse(data['conversation_id'].toString());
+    final initiatedBy = int.tryParse(data['initiated_by'].toString());
+    if (callId == null || conversationId == null) return;
+    if (initiatedBy == await _currentUserId()) return;
+    if (!_isIdle()) return;
+
+    state = state.copyWith(
+      status: CallStatus.ringing,
+      callId: callId,
+      conversationId: conversationId,
+      remoteUserId: initiatedBy,
+      remoteUserName: 'Anonymous',
+      isIncoming: true,
+    );
+
+    await initialize();
+    await _ref
+        .read(callSignalingServiceProvider)
+        .subscribeToConversation(conversationId.toString());
+    await _loadCallerName(conversationId);
+    _startCallTimer();
+  }
+
+  Future<void> _loadCallerName(int conversationId) async {
     try {
-      state = state.copyWith(status: CallStatus.connecting);
-
-      // Create answer (offer should have been received via signaling).
-      // For now, we'll handle this when the offer arrives.
-
-      // Notify backend.
-      if (state.callId != null) {
-        await _api.acceptCall(state.callId!);
+      final userId = (await _currentUserId()).toString();
+      final conversation = await _api.getConversation(conversationId.toString());
+      final key = conversation['talker_id'].toString() == userId
+          ? 'listener'
+          : 'talker';
+      final other = conversation[key] as Map<String, dynamic>?;
+      final identity = other?['pseudonymous_identity'] as Map<String, dynamic>?;
+      final name =
+          (identity?['display_name'] ?? identity?['username'] ?? 'Anonymous')
+              .toString();
+      if (state.status == CallStatus.ringing) {
+        state = state.copyWith(remoteUserName: name);
       }
+    } catch (e) {}
+  }
 
-      state = state.copyWith(status: CallStatus.active);
+  Future<void> acceptCall() async {
+    final callId = state.callId;
+    if (callId == null || state.status != CallStatus.ringing) return;
+    state = state.copyWith(status: CallStatus.connecting);
+    final offer = _remoteOffer;
+    if (offer == null) {
+      _answerPending = true;
+      return;
+    } 
+ await _createAndSendAnswer();
+  }
+
+  Future<void> _createAndSendAnswer() async {
+    final callId = state.callId;
+    final offer = _remoteOffer;
+    if (callId == null || offer == null) return;
+    try {
+      if (!await _ensureWebRtcReady()) return;
+      final answer =
+          await _ref.read(webRTCServiceProvider).createAnswer(offer);
+      await _sendSignal(callId, {'event': 'answer', 'answer': answer});
+      await _api.acceptCall(callId);
     } catch (e) {
       state = state.copyWith(
         status: CallStatus.ended,
         errorMessage: 'Failed to accept call: $e',
       );
+      await _teardownLocal();
     }
   }
 
-  /// Decline an incoming call.
-  Future<void> declineCall() async {
+  Future<void> _onOfferReceived(Map<String, dynamic> data) async {
+    final fromUserId = int.tryParse(data['from_user_id'].toString());
+    if (fromUserId == await _currentUserId()) return;
+    final status = state.status;
+    if (status != CallStatus.ringing && status != CallStatus.connecting) return;
+    final offer = data['offer'];
+    if (offer is! Map<String, dynamic>) return;
+    _remoteOffer = {'sdp': offer['sdp'], 'type': offer['type']};
+    if (state.status == CallStatus.connecting && _answerPending) {
+      _answerPending = false;
+      await _createAndSendAnswer();
+    }
+  }
+
+  Future<void> _onAnswerReceived(Map<String, dynamic> data) async {
+    final fromUserId = int.tryParse(data['from_user_id'].toString());
+    if (fromUserId == await _currentUserId()) return;
+    if (state.status == CallStatus.idle || state.status == CallStatus.ended) return;
+    final answer = data['answer'];
+    if (answer is! Map<String, dynamic>) return;
+    await _ref.read(webRTCServiceProvider).setRemoteAnswer(answer);
+    _clearCallTimer();
+    state = state.copyWith(status: CallStatus.connecting);
+  }
+
+  Future<void> _onIceCandidateReceived(Map<String, dynamic> data) async {
+    final fromUserId = int.tryParse(data['from_user_id'].toString());
+    if (fromUserId == await _currentUserId()) return;
+    final candidate = data['candidate'];
+    if (candidate is! Map<String, dynamic>) return;
+    await _ref.read(webRTCServiceProvider).addIceCandidate(candidate);
+  }
+
+  Future<void> _sendLocalIceCandidate(RTCIceCandidate candidate) async {
+    final callId = state.callId;
+    if (callId == null) return;
+    await _sendSignal(callId, {
+      'event': 'ice',
+      'candidate': {
+        'candidate': candidate.candidate,
+        'sdpMid': candidate.sdpMid,
+        'sdpMLineIndex': candidate.sdpMLineIndex,
+      },
+    });
+  }
+
+  void _onCallAccepted(Map<String, dynamic> data) {
+    if (state.status == CallStatus.ringing) {
+      _clearCallTimer();
+      state = state.copyWith(status: CallStatus.connecting);
+    }
+  }
+
+  void _onCallDeclined(Map<String, dynamic> data) {
+    if (state.status == CallStatus.idle) return;
+    _teardownLocal();
+  }
+
+  void _onCallEndedRemote(Map<String, dynamic> data) {
+    if (state.status == CallStatus.idle) return;
+    _teardownLocal();
+  }
+
+  Future<void> _sendSignal(int callId, Map<String, dynamic> body) async {
     try {
-      if (state.callId != null) {
-        await _api.declineCall(state.callId!);
-      }
-    } catch (e) {
-      // Ignore errors when declining.
-    } finally {
-      state = const CallState();
-    }
+      await _api.sendSignal(callId, body);
+    } catch (e) {}
   }
 
-  /// End the current call.
+  void _startCallTimer() {
+    _clearCallTimer();
+    _callTimer = Timer(_callTimeout, () async {
+      final s = state.status;
+      if (s == CallStatus.ringing || s == CallStatus.connecting) {
+        if (state.isIncoming)
+          await declineCall();
+        else
+          await endCall();
+      }
+    });
+  }
+
+  void _clearCallTimer() { _callTimer?.cancel(); _callTimer = null; }
+
   Future<void> endCall() async {
+    final callId = state.callId;
     try {
-      if (state.callId != null) {
-        await _api.endCall(state.callId!);
-      }
-    } catch (e) {
-      // Ignore errors when ending.
-    } finally {
-      await _ref.read(webRTCServiceProvider).dispose();
-      state = const CallState();
-    }
+      if (callId != null) await _api.endCall(callId);
+    } catch (e) {}
+    await _teardownLocal();
   }
 
-  /// Toggle mute.
+  Future<void> declineCall() async {
+    final callId = state.callId;
+    try {
+      if (callId != null) await _api.declineCall(callId);
+    } catch (e) {}
+    await _teardownLocal();
+  }
+
+  Future<void> _teardownLocal() async {
+    _clearCallTimer();
+    _remoteOffer = null;
+    _answerPending = false;
+    await _ref.read(webRTCServiceProvider).dispose();
+    _ref.read(callSignalingServiceProvider).unsubscribeFromConversation(
+      state.conversationId?.toString(),
+    );
+    state = const CallState();
+  }
+
   void toggleMute() {
-    _ref.read(webRTCServiceProvider).toggleMute();
-    state = state.copyWith(isMuted: !state.isMuted);
+    final webrtc = _ref.read(webRTCServiceProvider);
+    webrtc.toggleMute();
+    state = state.copyWith(isMuted: webrtc.isMuted);
   }
 
-  /// Toggle speaker.
   void toggleSpeaker() {
     state = state.copyWith(isSpeakerOn: !state.isSpeakerOn);
-    _ref.read(webRTCServiceProvider).setSpeakerphone(state.isSpeakerOn);
+    unawaited(_ref.read(webRTCServiceProvider).setSpeakerphone(state.isSpeakerOn));
   }
 
-  /// Handle incoming call notification.
   void handleIncomingCall({
     required int callId,
     required int conversationId,
     required int remoteUserId,
     required String remoteUserName,
   }) {
+    if (_isBusy()) return;
+    _ref
+        .read(callSignalingServiceProvider)
+        .subscribeToConversation(conversationId.toString());
     state = CallState(
       status: CallStatus.ringing,
       callId: callId,
       conversationId: conversationId,
       remoteUserId: remoteUserId,
       remoteUserName: remoteUserName,
+      isIncoming: true,
     );
+    _startCallTimer();
   }
 
-  /// Reset call state.
+  bool _isIdle() => state.status == CallStatus.idle || state.status == CallStatus.ended;
+  bool _isBusy() => ! _isIdle();
+
   void reset() {
+    _clearCallTimer();
+    _remoteOffer = null;
+    _answerPending = false;
     state = const CallState();
   }
 
-  Future<int> _getCurrentUserId() async {
+  Future<int> _currentUserId() async {
+    final cached = _cachedUserId;
+    if (cached != null) return cached;
     final user = await _authService.getUserData();
-    return int.parse(user?['id'].toString() ?? '0');
+    final id = int.tryParse(user?['id'].toString() ?? '') ?? 0;
+    _cachedUserId = id;
+    return id;
+  }
+
+  void _onPeerConnectionState(RTCPeerConnectionState peerState) {
+    if (peerState == RTCPeerConnectionState.RTCPeerConnectionStateConnected) {
+      _clearCallTimer();
+      if (state.status != CallStatus.idle) {
+        state = state.copyWith(
+          status: CallStatus.active,
+          startedAt: state.startedAt ?? DateTime.now(),
+        );
+      }
+    } else if (peerState ==
+            RTCPeerConnectionState.RTCPeerConnectionStateFailed ||
+        peerState == RTCPeerConnectionState.RTCPeerConnectionStateClosed) {
+      if (state.status == CallStatus.active ||
+          state.status == CallStatus.connecting) {
+        state = state.copyWith(
+          status: CallStatus.ended,
+          errorMessage: 'Call connection lost.',
+        );
+      }
+    }
   }
 }
 
 /// The main call state provider.
-final callStateProvider = StateNotifierProvider<CallStateNotifier, CallState>((
-  ref,
-) {
-  return CallStateNotifier(ref);
-});
+final callStateProvider = StateNotifierProvider<CallStateNotifier, CallState>(
+  (ref) => CallStateNotifier(ref),
+);

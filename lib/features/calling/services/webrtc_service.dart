@@ -6,29 +6,40 @@ import 'package:flutter_webrtc/flutter_webrtc.dart';
 /// - Creating the peer connection
 /// - Local audio capture
 /// - Offer/answer exchange
-/// - ICE candidate management
-/// - Mute/unmute
+/// - ICE candidate management (local candidates are surfaced via callback,
+///   remote candidates are queued until the remote description is set)
+/// - Mute/unmute and speakerphone
+
+
 class WebRTCService {
   RTCPeerConnection? _peerConnection;
   MediaStream? _localStream;
-  List<Map<String, dynamic>> _iceServers = [];
+  List<Map<String, dynamic>> _iceServers = const [];
+  bool _isRemoteDescriptionSet = false;
+  final List<RTCIceCandidate> _pendingRemoteCandidates = [];
+
+  /// Callbacks registered by the app. They must be registered before the
+  /// peer connection is created (i.e. before createOffer/createAnswer).
+  void Function(RTCIceCandidate candidate)? onLocalIceCandidate;
+  void Function(MediaStream stream)? onRemoteStream;
+  void Function(RTCPeerConnectionState state)? onConnectionStateChanged;
 
   /// Initialize the service with ICE server configuration from the backend.
+  ///
+  /// Safe to call repeatedly; the local stream is only captured once (and
+  /// re-captured after [dispose]).
   Future<void> initialize(List<Map<String, dynamic>> iceServers) async {
     _iceServers = iceServers;
-    await _createLocalStream();
-  }
-
-  /// Create the local audio stream and peer connection.
-  Future<void> _createLocalStream() async {
-    _localStream = await navigator.mediaDevices.getUserMedia({
+    _localStream ??= await navigator.mediaDevices.getUserMedia({
       'audio': true,
       'video': false,
     });
   }
 
-  /// Create or recreate the peer connection.
-  Future<void> _createPeerConnection() async {
+  /// Create the peer connection (once) and attach the local stream.
+  Future<void> _ensurePeerConnection() async {
+    if (_peerConnection != null) return;
+
     final config = <String, dynamic>{
       'iceServers': _iceServers.map((server) => {
         'urls': server['urls'],
@@ -37,82 +48,92 @@ class WebRTCService {
       }).toList(),
     };
 
-    _peerConnection = await createPeerConnection(config);
+    final pc = await createPeerConnection(config);
+    _peerConnection = pc;
 
-    // Add local audio track to the connection.
-    if (_localStream != null) {
-      for (final track in _localStream!.getTracks()) {
-        await _peerConnection!.addTrack(track, _localStream!);
+    // Wire the callbacks registered by the app.
+    pc.onIceCandidate = (candidate) => onLocalIceCandidate?.call(candidate);
+    pc.onAddStream = (stream) => onRemoteStream?.call(stream);
+    pc.onConnectionState = (state) => onConnectionStateChanged?.call(state);
+
+    final localStream = _localStream;
+    if (localStream != null) {
+      for (final track in localStream.getTracks()) {
+        await pc.addTrack(track, localStream);
       }
     }
-
-    // Listen for remote audio stream.
-    _peerConnection!.onAddStream = (MediaStream stream) {
-      // Remote stream received — audio will play automatically.
-    };
-
-    // Listen for ICE candidates.
-    _peerConnection!.onIceCandidate = (RTCIceCandidate candidate) {
-      // Candidates are sent via the signaling service.
-    };
-
-    _peerConnection!.onConnectionState = (RTCPeerConnectionState state) {
-      // Connection state changes.
-    };
   }
 
   /// Create an SDP offer to start the call.
   Future<Map<String, dynamic>> createOffer() async {
-    await _createPeerConnection();
+    await _ensurePeerConnection();
 
     final offer = await _peerConnection!.createOffer({});
     await _peerConnection!.setLocalDescription(offer);
 
-    return {
-      'type': offer.type,
-      'sdp': offer.sdp,
-    };
+    return {'type': offer.type, 'sdp': offer.sdp};
   }
 
   /// Set the remote SDP offer and create an answer.
   Future<Map<String, dynamic>> createAnswer(Map<String, dynamic> offer) async {
-    await _createPeerConnection();
+    await _ensurePeerConnection();
 
-    await _peerConnection!.setRemoteDescription(
-      RTCSessionDescription(offer['sdp'], offer['type']),
-    );
+    await setRemoteDescription(offer);
 
     final answer = await _peerConnection!.createAnswer({});
     await _peerConnection!.setLocalDescription(answer);
 
-    return {
-      'type': answer.type,
-      'sdp': answer.sdp,
-    };
+    return {'type': answer.type, 'sdp': answer.sdp};
   }
 
   /// Set the remote SDP answer.
-  Future<void> setRemoteAnswer(Map<String, dynamic> answer) async {
+  Future<void> setRemoteAnswer(Map<String, dynamic> answer) =>
+      setRemoteDescription(answer);
+
+  /// Set a remote session description (offer or answer) and flush any
+  /// ICE candidates that arrived before it was set.
+  Future<void> setRemoteDescription(Map<String, dynamic> description) async {
     await _peerConnection?.setRemoteDescription(
-      RTCSessionDescription(answer['sdp'], answer['type']),
+      RTCSessionDescription(description['sdp'], description['type']),
     );
+    _isRemoteDescriptionSet = true;
+    await _flushPendingCandidates();
   }
 
-  /// Add a remote ICE candidate.
+  /// Add a remote ICE candidate. Candidates that arrive before the remote
+  /// description are queued and applied afterwards (adding a candidate
+  /// before the remote description throws).
   Future<void> addIceCandidate(Map<String, dynamic> candidate) async {
-    await _peerConnection?.addCandidate(
-      RTCIceCandidate(
-        candidate['candidate'],
-        candidate['sdpMid'],
-        candidate['sdpMLineIndex'],
-      ),
+    final rtcCandidate = RTCIceCandidate(
+      candidate['candidate'],
+      candidate['sdpMid'],
+      candidate['sdpMLineIndex'],
     );
+
+    if (!_isRemoteDescriptionSet) {
+      _pendingRemoteCandidates.add(rtcCandidate);
+      return;
+    }
+
+    await _peerConnection?.addCandidate(rtcCandidate);
+  }
+
+  Future<void> _flushPendingCandidates() async {
+    if (_pendingRemoteCandidates.isEmpty) return;
+
+    final queued = List<RTCIceCandidate>.from(_pendingRemoteCandidates);
+    _pendingRemoteCandidates.clear();
+
+    for (final candidate in queued) {
+      await _peerConnection?.addCandidate(candidate);
+    }
   }
 
   /// Toggle local audio mute.
   void toggleMute() {
-    if (_localStream != null) {
-      for (final track in _localStream!.getAudioTracks()) {
+    final localStream = _localStream;
+    if (localStream != null) {
+      for (final track in localStream.getAudioTracks()) {
         track.enabled = !track.enabled;
       }
     }
@@ -120,8 +141,9 @@ class WebRTCService {
 
   /// Check if local audio is muted.
   bool get isMuted {
-    if (_localStream != null) {
-      for (final track in _localStream!.getAudioTracks()) {
+    final localStream = _localStream;
+    if (localStream != null) {
+      for (final track in localStream.getAudioTracks()) {
         if (!track.enabled) return true;
       }
     }
@@ -129,27 +151,13 @@ class WebRTCService {
   }
 
   /// Set speakerphone on/off (mobile only).
-  Future<void> setSpeakerphone(bool enabled) async {
-    // Speakerphone toggle — platform-specific.
-    // flutter_webrtc handles this internally on most platforms.
-  }
+  Future<void> setSpeakerphone(bool enabled) =>
+      Helper.setSpeakerphoneOn(enabled);
 
-  /// Get the ICE candidate stream for the signaling service.
-  void Function(RTCIceCandidate)? get onIceCandidate =>
-      _peerConnection?.onIceCandidate;
-
-  /// Get the add stream callback.
-  set onAddStream(void Function(MediaStream)? callback) {
-    _peerConnection?.onAddStream = callback;
-  }
-
-  /// Get the connection state callback.
-  set onConnectionStateChange(void Function(RTCPeerConnectionState)? callback) {
-    _peerConnection?.onConnectionState = callback;
-  }
-
-  /// Dispose of all resources.
+  /// Dispose of all resources so the next call starts fresh.
   Future<void> dispose() async {
+    _pendingRemoteCandidates.clear();
+    _isRemoteDescriptionSet = false;
     await _localStream?.dispose();
     await _peerConnection?.close();
     _localStream = null;

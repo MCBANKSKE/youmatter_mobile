@@ -1,17 +1,18 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
-import 'package:youmatter_mobile/features/calling/presentation/screens/outgoing_call_screen.dart';
+import 'package:youmatter_mobile/features/calling/providers/call_state_provider.dart';
 
-class ChatScreen extends StatefulWidget {
+class ChatScreen extends ConsumerStatefulWidget {
   final String conversationId;
 
   const ChatScreen({super.key, required this.conversationId});
 
   @override
-  State<ChatScreen> createState() => _ChatScreenState();
+  ConsumerState<ChatScreen> createState() => _ChatScreenState();
 }
 
-class _ChatScreenState extends State<ChatScreen> {
+class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _api = ApiService();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
@@ -35,8 +36,15 @@ class _ChatScreenState extends State<ChatScreen> {
     super.dispose();
   }
 
-  Future<void> _load() async {
+    Future<void> _load() async {
     try {
+      // Keep the signaling socket warm and subscribed to this conversation so
+      // incoming calls are received while the chat is open.
+      ref.read(callStateProvider.notifier).initialize();
+      ref
+          .read(callSignalingServiceProvider)
+          .subscribeToConversation(widget.conversationId);
+
       final me = await _api.getMe();
       final conversation =
           await _api.getConversation(widget.conversationId);
@@ -295,7 +303,7 @@ class _ChatScreenState extends State<ChatScreen> {
         .toString();
   }
 
-  /// Start a voice call with the other participant.
+    /// Start a voice call with the other participant.
   Future<void> _startCall(String otherName) async {
     final conversationId = int.tryParse(widget.conversationId);
     if (conversationId == null) return;
@@ -303,14 +311,11 @@ class _ChatScreenState extends State<ChatScreen> {
     final otherId = _getOtherUserId();
     if (otherId == null) return;
 
-    Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => OutgoingCallScreen(
+    ref.read(callStateProvider.notifier).startCall(
           conversationId: conversationId,
+          remoteUserId: otherId,
           remoteUserName: otherName,
-        ),
-      ),
-    );
+        );
   }
 
   int? _getOtherUserId() {

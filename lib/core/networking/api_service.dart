@@ -72,6 +72,13 @@ class ApiService {
     return response.data;
   }
 
+  /// Lightweight status-only check used by the periodic conversation-expiry
+  /// poll. Returns `status`, `ended_at`, `ended_by`, and `expires_at`.
+  Future<Map<String, dynamic>> getConversationStatus(String id) async {
+    final response = await _dioClient.dio.get('/conversations/$id/status');
+    return response.data as Map<String, dynamic>;
+  }
+
   Future<void> endConversation(String id) async {
     await _dioClient.dio.post('/conversations/$id/end');
   }

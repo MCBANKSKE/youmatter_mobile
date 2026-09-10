@@ -101,9 +101,10 @@ class _NotificationsScreenState extends State<NotificationsScreen> {
                       final createdAt = DateTime.tryParse(
                               notification['created_at']?.toString() ?? '') ??
                           DateTime.now();
+                      final local = createdAt.toLocal();
                       final formatted =
-                          '${createdAt.day}/${createdAt.month} '
-                          '${createdAt.hour.toString().padLeft(2, '0')}:${createdAt.minute.toString().padLeft(2, '0')}';
+                          '${local.day}/${local.month} '
+                          '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
                       return ListTile(
                         leading: Icon(
                           _iconFor(data?['type']?.toString() ??

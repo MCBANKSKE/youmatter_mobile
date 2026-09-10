@@ -626,7 +626,9 @@ class _MessageBubble extends StatelessWidget {
     if (createdAt == null) return '';
     final parsed = DateTime.tryParse(createdAt.toString());
     if (parsed == null) return '';
-    return DateFormat.jm().format(parsed);
+    // The backend stores/returns UTC; convert to the user's local timezone
+    // before formatting so the bubble shows the recipient's local time.
+    return DateFormat.jm().format(parsed.toLocal());
   }
 
   bool get _isRead => message['is_read'] == true;

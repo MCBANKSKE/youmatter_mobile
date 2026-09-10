@@ -1,3 +1,5 @@
+// probe
+
 import 'dart:async';
 
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -7,6 +9,7 @@ import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/core/services/auth_service.dart';
 import 'package:youmatter_mobile/features/calling/models/call_state.dart';
 import 'package:youmatter_mobile/features/calling/services/call_signaling_coordinator.dart';
+import 'package:youmatter_mobile/features/calling/services/conversation_expiry_service.dart';
 import 'package:youmatter_mobile/features/calling/services/webrtc_service.dart';
 
 /// Provider for the WebRTC service instance.
@@ -25,6 +28,19 @@ final callSignalingServiceProvider = Provider<CallSignalingCoordinator>((ref) {
   final coordinator = CallSignalingCoordinator();
   ref.onDispose(() => coordinator.dispose());
   return coordinator;
+});
+
+/// Provider for the conversation-expiry poller.
+///
+/// Conversations auto-end after 1 hour on the server, but the client may miss
+/// the realtime event (backgrounded, queue worker down). This service polls
+/// every 25 minutes and surfaces a `conversationEnded` callback so the UI /
+/// active call can tear down promptly.
+final conversationExpiryServiceProvider =
+    Provider<ConversationExpiryService>((ref) {
+  final service = ConversationExpiryService(ApiService());
+  ref.onDispose(() => service.dispose());
+  return service;
 });
 
 /// Deadline applied while ringing/connecting so failed or abandoned calls
@@ -55,6 +71,11 @@ class CallStateNotifier extends StateNotifier<CallState> {
       ..onCallAccepted = _onCallAccepted
       ..onCallDeclined = _onCallDeclined
       ..onCallEnded = _onCallEndedRemote;
+
+    // Server-side conversation expiry (1-hour auto-end) is the fallback for
+    // missed realtime events. Tear down the call when the conversation ends.
+    _ref.read(conversationExpiryServiceProvider).onConversationEnded =
+        _onConversationEndedServer;
   }
 
   void _bindWebRtcCallbacks() {
@@ -122,6 +143,12 @@ class CallStateNotifier extends StateNotifier<CallState> {
       await _ref
           .read(callSignalingServiceProvider)
           .subscribeToConversation(conversationId.toString());
+
+      // Start the conversation-expiry poll so the client notices when the
+      // server ends the conversation (1-hour auto-end) even if the realtime
+      // event is missed.
+      _ref.read(conversationExpiryServiceProvider)
+          .watchConversation(conversationId.toString());
 
       final call = await _api.startCall(conversationId);
       final callId = int.tryParse(call['id'].toString());
@@ -279,6 +306,14 @@ class CallStateNotifier extends StateNotifier<CallState> {
     _teardownLocal();
   }
 
+  /// Fired by the ConversationExpiryService when the server reports the
+  /// conversation has ended (e.g. after the 1-hour window). Tear down the
+  /// active call so the user is not left on a dead WebRTC session.
+  void _onConversationEndedServer(Map<String, dynamic> status) {
+    if (state.status == CallStatus.idle) return;
+    _teardownLocal();
+  }
+
   Future<void> _sendSignal(int callId, Map<String, dynamic> body) async {
     try {
       await _api.sendSignal(callId, body);
@@ -332,6 +367,7 @@ class CallStateNotifier extends StateNotifier<CallState> {
     _ref.read(callSignalingServiceProvider).unsubscribeFromConversation(
       state.conversationId?.toString(),
     );
+    _ref.read(conversationExpiryServiceProvider).stopWatching();
     state = const CallState();
   }
 

@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
@@ -5,11 +7,33 @@ import 'package:youmatter_mobile/features/home/models/home_data.dart';
 
 /// Provider for managing home screen state.
 class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
-    HomeNotifier() : super(const AsyncValue.loading()) {
+  HomeNotifier() : super(const AsyncValue.loading()) {
     load();
+    _startExpiryPoll();
   }
 
   final ApiService _api = ApiService();
+
+  /// Re-fetch home data every 25 minutes so the UI reflects server-side
+  /// conversation expiry (1-hour auto-end) even when the app is backgrounded
+  /// and the realtime broadcast / push notification is missed.
+  Timer? _expiryTimer;
+
+  void _startExpiryPoll() {
+    _expiryTimer?.cancel();
+    _expiryTimer = Timer.periodic(
+      const Duration(minutes: 25),
+      (_) => unawaited(_silentRefresh()),
+    );
+  }
+
+  Future<void> _silentRefresh() async {
+    try {
+      await load();
+    } catch (_) {
+      // Best-effort; a failed poll is harmless.
+    }
+  }
 
   /// Load all home screen data from the backend.
   Future<void> load() async {
@@ -223,6 +247,12 @@ class HomeNotifier extends StateNotifier<AsyncValue<HomeData>> {
       default:
         return ActivityState.idle;
     }
+  }
+
+  @override
+  void dispose() {
+    _expiryTimer?.cancel();
+    super.dispose();
   }
 }
 

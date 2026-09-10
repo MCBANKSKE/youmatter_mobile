@@ -222,7 +222,15 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     setState(() => _isRecording = false);
 
     if (recorded != null) {
-      await _sendAudioMessage(recorded.path, duration: recorded.durationSeconds);
+      if (recorded.isTooShort) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Recording was too short — hold to record.'),
+          ),
+        );
+      } else {
+        await _sendAudioMessage(recorded.path, duration: recorded.durationSeconds);
+      }
     }
   }
 
@@ -252,22 +260,26 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       });
       _scrollToBottom();
     } catch (e) {
-      debugPrint('Audio send error: $e');
+      debugPrint('Audio send error');
       if (!mounted) return;
-      String friendly = 'Could not send audio message.';
-      final text = e.toString();
-      if (text.contains('422')) {
-        friendly =
-            'Could not send audio message: server rejected the file (422).';
-      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(friendly)),
+        SnackBar(content: Text(_audioErrorMessage(e))),
       );
     } finally {
       // Always clean up the local temp file, success or failure.
       await _voiceService.deleteRecording(path);
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  /// Surface the real server message on 422 so we can see WHICH rule
+  /// rejected the file (audio mime vs conversation vs duration).
+  String _audioErrorMessage(Object e) {
+    final text = e.toString();
+    if (text.contains('422')) {
+      return 'Server rejected audio (422): $text';
+    }
+    return 'Could not send audio message.';
   }
 
   Future<void> _redact(Map<String, dynamic> message) async {

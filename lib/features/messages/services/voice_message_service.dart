@@ -32,7 +32,7 @@ class VoiceMessageService {
     try {
       return await _recorder.hasPermission();
     } catch (e) {
-      debugPrint('Recorder availability check failed: $e');
+      debugPrint('Recorder availability check failed');
       return false;
     }
   }
@@ -44,7 +44,7 @@ class VoiceMessageService {
       final Directory tempDir = await getTemporaryDirectory();
       return p.join(tempDir.path, filename);
     } catch (e) {
-      debugPrint('Temp dir unavailable: $e');
+      debugPrint('Temp dir unavailable');
       try {
         final Directory appDir = await getApplicationDocumentsDirectory();
         final String recordingsDir = p.join(appDir.path, 'recordings');
@@ -54,7 +54,7 @@ class VoiceMessageService {
         }
         return p.join(recordingsDir, filename);
       } catch (e2) {
-        debugPrint('Documents dir unavailable: $e2');
+        debugPrint('Documents dir unavailable');
         return filename;
       }
     }
@@ -79,10 +79,9 @@ class VoiceMessageService {
       await _recorder.start(config, path: filePath);
       _isRecording = true;
       _startedAt = DateTime.now();
-      debugPrint('Started recording to: $filePath');
       return filePath;
     } catch (e) {
-      debugPrint('Failed to start recording: $e');
+      debugPrint('Failed to start recording');
       _isRecording = false;
       _currentRecordingPath = null;
       _startedAt = null;
@@ -97,12 +96,13 @@ class VoiceMessageService {
       final String? path = await _recorder.stop();
       _isRecording = false;
       final resolved = path ?? _currentRecordingPath;
-      debugPrint('Stopped recording: $resolved');
       if (resolved == null) return null;
+      final tooShort = await _rejectIfTooShort(resolved, duration);
+      if (tooShort != null) return tooShort;
       _currentRecordingPath = resolved;
       return RecordedAudio(resolved, duration?.inSeconds ?? 0);
     } catch (e) {
-      debugPrint('Failed to stop recording: $e');
+      debugPrint('Failed to stop recording');
       _isRecording = false;
       final resolved = _currentRecordingPath;
       if (resolved == null) return null;
@@ -112,12 +112,33 @@ class VoiceMessageService {
     }
   }
 
+  Future<RecordedAudio?> _rejectIfTooShort(
+    String resolved,
+    Duration? duration,
+  ) async {
+    try {
+      final file = File(resolved);
+      if (await file.exists()) {
+        final size = await file.length();
+        final secs = duration?.inSeconds ?? 0;
+        if (size < 1024 || secs < 1) {
+          await deleteRecording(resolved);
+          _currentRecordingPath = null;
+          return RecordedAudio.tooShort();
+        }
+      }
+    } catch (e) {
+      debugPrint('Recording size check failed');
+    }
+    return null;
+  }
+
   Future<void> cancelRecording() async {
     if (_isRecording) {
       try {
         await _recorder.stop();
       } catch (e) {
-        debugPrint('Failed to stop recorder on cancel: $e');
+        debugPrint('Failed to stop recorder on cancel');
       }
       _isRecording = false;
     }
@@ -135,10 +156,9 @@ class VoiceMessageService {
       final file = File(path);
       if (await file.exists()) {
         await file.delete();
-        debugPrint('Deleted recording: $path');
       }
     } catch (e) {
-      debugPrint('Failed to delete recording: $e');
+      debugPrint('Failed to delete recording');
     }
   }
 
@@ -152,15 +172,20 @@ class VoiceMessageService {
       _currentRecordingPath = null;
       await _recorder.dispose();
     } catch (e) {
-      debugPrint('Failed to dispose recorder: $e');
+      debugPrint('Failed to dispose recorder');
     }
   }
 }
 
 class RecordedAudio {
-  RecordedAudio(this.path, this.durationSeconds);
+  RecordedAudio(this.path, this.durationSeconds) : isTooShort = false;
+  RecordedAudio.tooShort()
+      : path = '',
+        durationSeconds = 0,
+        isTooShort = true;
   final String path;
   final int durationSeconds;
+  final bool isTooShort;
 }
 
 typedef AudioRecordingService = VoiceMessageService;

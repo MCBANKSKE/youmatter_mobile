@@ -159,7 +159,9 @@ class AudioRecordingService {
   /// Check if the recorder is available
   Future<bool> isAvailable() async {
     try {
-      return await _recorder.isRecorderAvailable();
+      // The record package doesn't have isRecorderAvailable, so we check permissions
+      final hasPermission = await _recorder.hasPermission();
+      return hasPermission;
     } catch (e) {
       debugPrint('Failed to check recorder availability: $e');
       return false;

@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:youmatter_mobile/features/messaging/services/audio_recording_service.dart';
@@ -32,7 +31,6 @@ class _MessageInputState extends ConsumerState<MessageInput> {
   final FocusNode _focusNode = FocusNode();
   bool _isRecording = false;
   bool _isRecordingAvailable = false;
-  String? _recordingPath;
 
   @override
   void initState() {
@@ -73,7 +71,6 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     if (path != null && mounted) {
       setState(() {
         _isRecording = true;
-        _recordingPath = path;
       });
     }
   }
@@ -91,8 +88,6 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     if (path != null) {
       widget.onSendMessage('[Audio message]', audioPath: path);
     }
-
-    _recordingPath = null;
   }
 
   Future<void> _cancelRecording() async {
@@ -102,7 +97,6 @@ class _MessageInputState extends ConsumerState<MessageInput> {
     if (mounted) {
       setState(() {
         _isRecording = false;
-        _recordingPath = null;
       });
     }
   }

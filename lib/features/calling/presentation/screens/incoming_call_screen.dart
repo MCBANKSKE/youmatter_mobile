@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:youmatter_mobile/features/calling/presentation/screens/active_call_screen.dart';
 import 'package:youmatter_mobile/features/calling/providers/call_state_provider.dart';
 
 /// Screen shown when receiving an incoming call.

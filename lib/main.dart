@@ -22,6 +22,9 @@ import 'navigation/app_router.dart';
 //   runApp(const ProviderScope(child: MyApp()));
 // }
 void main() {
+  // Ensure Flutter bindings are initialized before running the app.
+  // This is required for some plugins (like path_provider) to work properly.
+  WidgetsFlutterBinding.ensureInitialized();
   runApp(const ProviderScope(child: MyApp()));
 }
 
@@ -65,15 +68,139 @@ class MyApp extends ConsumerWidget {
                 conversationId: callState.conversationId ?? 0,
                 remoteUserName: callState.remoteUserName ?? 'Anonymous',
               ),
-            if (callState.status == CallStatus.connecting ||
-                callState.status == CallStatus.active)
+            // Show connecting screen while waiting for call to connect
+            if (callState.status == CallStatus.connecting)
+              _ConnectingCallScreen(
+                conversationId: callState.conversationId ?? 0,
+                remoteUserName: callState.remoteUserName ?? 'Anonymous',
+              ),
+            if (callState.status == CallStatus.active)
               ActiveCallScreen(
                 conversationId: callState.conversationId ?? 0,
                 remoteUserName: callState.remoteUserName ?? 'Anonymous',
               ),
+            // Show error message if call failed
+            if (callState.status == CallStatus.ended && callState.errorMessage != null)
+              _CallErrorScreen(
+                errorMessage: callState.errorMessage!,
+                onDismiss: () {
+                  ref.read(callStateProvider.notifier).reset();
+                },
+              ),
           ],
         );
       },
+    );
+  }
+}
+
+/// Screen shown while connecting a call
+class _ConnectingCallScreen extends StatelessWidget {
+  final int conversationId;
+  final String remoteUserName;
+
+  const _ConnectingCallScreen({
+    required this.conversationId,
+    required this.remoteUserName,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: SafeArea(
+        child: Column(
+          children: [
+            const Spacer(),
+            const CircularProgressIndicator(),
+            const SizedBox(height: 24),
+            Text(
+              'Connecting...',
+              style: theme.textTheme.titleMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 24),
+            CircleAvatar(
+              radius: 60,
+              child: Text(
+                remoteUserName.characters.first.toUpperCase(),
+                style: const TextStyle(fontSize: 36),
+              ),
+            ),
+            const SizedBox(height: 16),
+            Text(
+              remoteUserName,
+              style: theme.textTheme.headlineSmall,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'Listener',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const Spacer(),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Screen shown when a call fails
+class _CallErrorScreen extends StatelessWidget {
+  final String errorMessage;
+  final VoidCallback onDismiss;
+
+  const _CallErrorScreen({
+    required this.errorMessage,
+    required this.onDismiss,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Scaffold(
+      backgroundColor: theme.colorScheme.surface,
+      body: SafeArea(
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(
+                  Icons.error_outline,
+                  size: 64,
+                  color: theme.colorScheme.error,
+                ),
+                const SizedBox(height: 16),
+                Text(
+                  'Call Failed',
+                  style: theme.textTheme.headlineSmall?.copyWith(
+                    color: theme.colorScheme.error,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Text(
+                  errorMessage,
+                  textAlign: TextAlign.center,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(height: 24),
+                FilledButton(
+                  onPressed: onDismiss,
+                  child: const Text('OK'),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

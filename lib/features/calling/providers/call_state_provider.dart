@@ -5,6 +5,7 @@ import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_riverpod/legacy.dart';
 import 'package:flutter_webrtc/flutter_webrtc.dart';
+import 'package:permission_handler/permission_handler.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/core/services/auth_service.dart';
 import 'package:youmatter_mobile/features/calling/models/call_state.dart';
@@ -108,6 +109,17 @@ class CallStateNotifier extends StateNotifier<CallState> {
 
   Future<bool> _ensureWebRtcReady() async {
     if (!await _ensureInitialized()) return false;
+
+    // Request permissions before accessing the microphone.
+    final microphoneStatus = await Permission.microphone.request();
+    if (!microphoneStatus.isGranted) {
+      state = state.copyWith(
+        status: CallStatus.ended,
+        errorMessage: 'Microphone permission denied.',
+      );
+      return false;
+    }
+
     final iceServers = _iceServers;
     if (iceServers == null) return false;
     try {
@@ -132,13 +144,15 @@ class CallStateNotifier extends StateNotifier<CallState> {
     if (!_isIdle()) return;
     if (!await _ensureWebRtcReady()) return;
 
-    state = state.copyWith(
-            status: CallStatus.ringing,
+    // Set connecting state first so the UI shows the outgoing call screen
+    state = CallState(
+      status: CallStatus.connecting,
       conversationId: conversationId,
       remoteUserId: remoteUserId,
       remoteUserName: remoteUserName,
       isIncoming: false,
     );
+
     try {
       await _ref
           .read(callSignalingServiceProvider)
@@ -153,17 +167,26 @@ class CallStateNotifier extends StateNotifier<CallState> {
       final call = await _api.startCall(conversationId);
       final callId = int.tryParse(call['id'].toString());
       if (callId == null) throw Exception('Call session id missing.');
-      state = state.copyWith(callId: callId);
+
+      // Update state with callId and set to ringing
+      state = state.copyWith(
+        status: CallStatus.ringing,
+        callId: callId,
+      );
 
       final offer = await _ref.read(webRTCServiceProvider).createOffer();
       await _sendSignal(callId, {'event': 'offer', 'offer': offer});
       _startCallTimer();
     } catch (e) {
+      // Only update error message, keep the state for the UI to show
       state = state.copyWith(
         status: CallStatus.ended,
         errorMessage: 'Failed to start call: $e',
       );
-      await _teardownLocal();
+      // Don't teardown immediately - let the UI show the error
+      Future.delayed(const Duration(seconds: 3), () {
+        _teardownLocal();
+      });
     }
   }
 

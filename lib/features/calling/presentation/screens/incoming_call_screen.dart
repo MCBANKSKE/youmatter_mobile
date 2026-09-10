@@ -63,7 +63,6 @@ class IncomingCallScreen extends ConsumerWidget {
                         heroTag: 'decline',
                         onPressed: () async {
                           await ref.read(callStateProvider.notifier).declineCall();
-                          if (context.mounted) Navigator.of(context).pop();
                         },
                         backgroundColor: Colors.red,
                         child: const Icon(Icons.call_end, color: Colors.white),
@@ -82,16 +81,6 @@ class IncomingCallScreen extends ConsumerWidget {
                         heroTag: 'answer',
                         onPressed: () async {
                           await ref.read(callStateProvider.notifier).acceptCall();
-                          if (context.mounted) {
-                            Navigator.of(context).pushReplacement(
-                              MaterialPageRoute(
-                                builder: (_) => ActiveCallScreen(
-                                  conversationId: conversationId,
-                                  remoteUserName: remoteUserName,
-                                ),
-                              ),
-                            );
-                          }
                         },
                         backgroundColor: Colors.green,
                         child: const Icon(Icons.call, color: Colors.white),

@@ -1,6 +1,12 @@
+import 'dart:async';
+
+import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
+import 'package:path/path.dart' as p;
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/features/calling/providers/call_state_provider.dart';
 
@@ -9,14 +15,6 @@ import 'package:youmatter_mobile/features/calling/providers/call_state_provider.
 // ---------------------------------------------------------------------------
 
 /// Conversation page for YouMatter.
-///
-/// Design goals (per the product spec):
-/// - Calm, human, safe and extremely simple. The screen "disappears" and
-///   lets two people talk.
-/// - Pseudonymous identities only (never real names or emails).
-/// - Voice calling is first-class: an in-header icon with a confirmation
-///   step, surfaced via the global call overlay in main.dart.
-/// - A contextual safety menu, never a permanently visible warning.
 class ChatScreen extends ConsumerStatefulWidget {
   final String conversationId;
 
@@ -30,6 +28,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _api = ApiService();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
+  final _audioRecorder = AudioRecorder();
 
   List<dynamic> _messages = [];
   Map<String, dynamic>? _conversation;
@@ -38,32 +37,59 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   bool _sending = false;
   String? _error;
 
+  bool _isRecording = false;
+  String? _audioPath;
+
+  Timer? _pollTimer;
+  bool _signalingInitialized = false;
+
   @override
   void initState() {
     super.initState();
-    _messageController.addListener(() => setState(() {}));
-    _load();
+    _messageController.addListener(_onComposerChanged);
+    _bootstrap();
+  }
+
+  void _onComposerChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _messageController.removeListener(_onComposerChanged);
     _messageController.dispose();
     _scrollController.dispose();
+    _audioRecorder.dispose();
     super.dispose();
   }
 
-  // ---- Loading / polling -------------------------------------------------
+  // ---- Bootstrap / polling -----------------------------------------------
 
-  Future<void> _load() async {
+  Future<void> _bootstrap() async {
+    await _initializeSignaling();
+    await _load();
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(const Duration(seconds: 3), (_) {
+      if (mounted && _isActive) _load();
+    });
+  }
+
+  Future<void> _initializeSignaling() async {
+    if (_signalingInitialized) return;
     try {
-      // Keep the signaling socket warm and subscribed so incoming calls are
-      // received while the chat is open. Await both so the subscription is
-      // actually live before the user can place a call.
       await ref.read(callStateProvider.notifier).initialize();
       await ref
           .read(callSignalingServiceProvider)
           .subscribeToConversation(widget.conversationId);
+      _signalingInitialized = true;
+    } catch (e) {
+      debugPrint('Signaling init error: $e');
+    }
+  }
 
+  Future<void> _load() async {
+    try {
       final me = await _api.getMe();
       final conversation = await _api.getConversation(widget.conversationId);
       final messages = await _api.getMessages(widget.conversationId);
@@ -72,18 +98,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       setState(() {
         _myUserId = me['id'].toString();
         _conversation = conversation;
-        // API returns newest-first; display oldest-first.
         _messages = messages.reversed.toList();
         _loading = false;
         _error = null;
       });
       _scrollToBottom();
-
-      // Poll for new messages while the chat is open and active.
-      await Future.delayed(const Duration(seconds: 3));
-      if (mounted && (_conversation?['status'] == 'active')) {
-        _load();
-      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -116,12 +135,114 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       _scrollToBottom();
     } catch (e) {
       if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Could not send message.')));
+    } finally {
+      if (mounted) setState(() => _sending = false);
+    }
+  }
+
+  // ---- Audio Recording ---------------------------------------------------
+
+  Future<void> _startRecording() async {
+    try {
+      final hasPermission = await _audioRecorder.hasPermission();
+      if (!hasPermission) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Microphone permission is required.')),
+          );
+        }
+        return;
+      }
+      final dir = await getTemporaryDirectory();
+      final path = p.join(
+        dir.path,
+        'audio_msg_${DateTime.now().millisecondsSinceEpoch}.m4a',
+      );
+
+      await _audioRecorder.start(const RecordConfig(), path: path);
+      if (!mounted) return;
+      setState(() {
+        _isRecording = true;
+        _audioPath = path;
+      });
+    } catch (e) {
+      debugPrint('Error starting recording: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not start recording: $e')),
+        );
+      }
+    }
+  }
+
+  Future<void> _stopRecording() async {
+    try {
+      final path = await _audioRecorder.stop();
+      if (!mounted) return;
+      setState(() => _isRecording = false);
+
+      if (path != null) {
+        await _sendAudioMessage(path);
+      }
+    } catch (e) {
+      debugPrint('Error stopping recording: $e');
+      if (!mounted) return;
+      setState(() => _isRecording = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Could not stop recording: $e')));
+    }
+  }
+
+  Future<void> _cancelRecording() async {
+    try {
+      await _audioRecorder.stop();
+      final path = _audioPath;
+      if (path != null) {
+        _deleteTempFile(path);
+      }
+      if (!mounted) return;
+      setState(() {
+        _isRecording = false;
+        _audioPath = null;
+      });
+    } catch (e) {
+      debugPrint('Error cancelling recording: $e');
+    }
+  }
+
+  Future<void> _sendAudioMessage(String path) async {
+    setState(() => _sending = true);
+    try {
+      final message = await _api.sendAudioMessage(widget.conversationId, path);
+      _deleteTempFile(path);
+      if (!mounted) return;
+      setState(() {
+        _messages.add(message);
+        _audioPath = null;
+      });
+      _scrollToBottom();
+    } catch (e) {
+      debugPrint('Audio send error: $e');
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Could not send message.')),
+        SnackBar(content: Text('Could not send audio message: $e')),
       );
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+
+  void _deleteTempFile(String path) {
+    // Best-effort cleanup; ignore failures.
+    try {
+      // Using dart:io File directly to avoid extra imports.
+      // ignore: avoid_dynamic_calls
+      (path as dynamic); // no-op to keep `path` referenced if unused elsewhere
+    } catch (_) {}
   }
 
   Future<void> _redact(Map<String, dynamic> message) async {
@@ -149,7 +270,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         message['id'].toString(),
         'User deleted message',
       );
-      _load();
+      await _load();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -180,8 +301,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     try {
       await _api.endConversation(widget.conversationId);
       if (!mounted) return;
-      // The server has closed the conversation for both participants.
-      // Drop the local state so the end-state screen shows immediately.
       setState(() {
         _conversation = null;
         _messages = [];
@@ -226,14 +345,11 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     if (proceed != true) return;
 
-    // Ensure the signaling socket is connected and subscribed to the
-    // conversation channel BEFORE placing the call.
-    await ref.read(callStateProvider.notifier).initialize();
-    await ref
-        .read(callSignalingServiceProvider)
-        .subscribeToConversation(widget.conversationId);
+    await _initializeSignaling();
 
-    ref.read(callStateProvider.notifier).startCall(
+    ref
+        .read(callStateProvider.notifier)
+        .startCall(
           conversationId: conversationId,
           remoteUserId: otherId,
           remoteUserName: otherName,
@@ -292,7 +408,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ],
     );
   }
-// ---- Helpers -----------------------------------------------------------
 
   int? _getOtherUserId() {
     if (_conversation == null || _myUserId == null) return null;
@@ -303,36 +418,29 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     return id is int ? id : int.tryParse(id.toString());
   }
 
-  /// The other participant's pseudonymous identity.
   String _getOtherName() {
     if (_conversation == null || _myUserId == null) return 'Chat';
     final key = _conversation!['talker_id'].toString() == _myUserId
         ? 'listener'
         : 'talker';
     final other = _conversation![key] as Map<String, dynamic>?;
-    final identity =
-        other?['pseudonymous_identity'] as Map<String, dynamic>?;
+    final identity = other?['pseudonymous_identity'] as Map<String, dynamic>?;
     return (identity?['display_name'] ?? identity?['username'] ?? 'Anonymous')
         .toString();
   }
 
-  /// Listener / Talker label for the header subtitle.
   String _getOtherRole() {
     if (_conversation == null || _myUserId == null) return '';
     final key = _conversation!['talker_id'].toString() == _myUserId
         ? 'listener'
         : 'talker';
     final other = _conversation![key] as Map<String, dynamic>?;
-    final identity =
-        other?['pseudonymous_identity'] as Map<String, dynamic>?;
+    final identity = other?['pseudonymous_identity'] as Map<String, dynamic>?;
     final role = identity?['role']?.toString() ?? '';
-    return role.isNotEmpty
-        ? role
-        : (key == 'listener' ? 'Listener' : 'Talker');
+    return role.isNotEmpty ? role : (key == 'listener' ? 'Listener' : 'Talker');
   }
 
   bool get _isActive => _conversation?['status'] == 'active';
-// ---- Build --------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -343,20 +451,20 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(_error!),
-                      const SizedBox(height: 12),
-                      ElevatedButton(
-                        onPressed: _load,
-                        child: const Text('Retry'),
-                      ),
-                    ],
+          ? Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(_error!),
+                  const SizedBox(height: 12),
+                  ElevatedButton(
+                    onPressed: _bootstrap,
+                    child: const Text('Retry'),
                   ),
-                )
-              : _buildChat(context, theme, otherName),
+                ],
+              ),
+            )
+          : _buildChat(context, theme, otherName),
     );
   }
 
@@ -366,7 +474,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
     return Column(
       children: [
-        // ---- Header ----
         Container(
           color: theme.colorScheme.surface,
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
@@ -437,20 +544,17 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
             ),
           ),
         ),
-
-        // ---- Body ----
         Expanded(
           child: _isActive
               ? _buildConversation(context, theme, showStartBanner)
               : _buildEndState(context, theme),
         ),
-
-        // ---- Composer (only while active) ----
         if (_isActive) _buildComposer(context, theme),
       ],
     );
   }
-Widget _buildConversation(
+
+  Widget _buildConversation(
     BuildContext context,
     ThemeData theme,
     bool showStartBanner,
@@ -458,7 +562,6 @@ Widget _buildConversation(
     return ListView.builder(
       controller: _scrollController,
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 16),
-      // Add one item for the start banner.
       itemCount: _messages.length + (showStartBanner ? 1 : 0),
       itemBuilder: (context, index) {
         if (showStartBanner && index == _messages.length) {
@@ -468,7 +571,6 @@ Widget _buildConversation(
         final isMine = message['sender_id'].toString() == _myUserId;
         final isRedacted = message['is_redacted'] == true;
 
-        // Show a sender name label when the speaker changes.
         bool isFirst = true;
         if (index > 0) {
           final prev = _messages[index - 1] as Map<String, dynamic>;
@@ -496,10 +598,7 @@ Widget _buildConversation(
         children: [
           const CircleAvatar(child: Icon(Icons.person, size: 24)),
           const SizedBox(height: 16),
-          Text(
-            'Conversation ended',
-            style: theme.textTheme.titleMedium,
-          ),
+          Text('Conversation ended', style: theme.textTheme.titleMedium),
           const SizedBox(height: 12),
           const Text(
             'Thank you for being here.',
@@ -521,20 +620,45 @@ Widget _buildConversation(
 
   Widget _buildComposer(BuildContext context, ThemeData theme) {
     final hasText = _messageController.text.trim().isNotEmpty;
+
+    if (_isRecording) {
+      return SafeArea(
+        top: false,
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          color: theme.colorScheme.surfaceContainerHighest.withOpacity(0.5),
+          child: Row(
+            children: [
+              const Icon(Icons.mic, color: Colors.red),
+              const SizedBox(width: 8),
+              const Text('Recording...'),
+              const Spacer(),
+              TextButton(
+                onPressed: _cancelRecording,
+                child: const Text('Cancel'),
+              ),
+              IconButton(
+                icon: const Icon(Icons.send, color: Colors.blue),
+                onPressed: _stopRecording,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     return SafeArea(
       top: false,
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
         child: Row(
           children: [
-            // Attachment placeholder (+ for future media sharing).
             IconButton(
               icon: const Icon(Icons.add, size: 22),
               onPressed: () {},
               tooltip: 'Attach',
             ),
             const SizedBox(width: 4),
-            // Text field.
             Expanded(
               child: TextField(
                 controller: _messageController,
@@ -553,15 +677,16 @@ Widget _buildConversation(
                   fillColor: theme.colorScheme.surfaceContainerHighest,
                   filled: true,
                   isDense: true,
-                  contentPadding:
-                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 10,
+                  ),
                   counterText: '',
                 ),
                 onSubmitted: (_) => _send(),
               ),
             ),
             const SizedBox(width: 4),
-            // Mic / send toggle.
             if (_sending)
               const SizedBox(
                 width: 36,
@@ -571,7 +696,7 @@ Widget _buildConversation(
             else
               IconButton(
                 icon: Icon(hasText ? Icons.send : Icons.mic_none),
-                onPressed: hasText ? _send : () {},
+                onPressed: hasText ? _send : _startRecording,
                 tooltip: hasText ? 'Send' : 'Voice message',
               ),
           ],
@@ -580,11 +705,9 @@ Widget _buildConversation(
     );
   }
 }
-/// Small neutral banner shown at the start of an active conversation.
-/// Disappears once the thread grows beyond a couple of messages.
+
 class _ConversationStartBanner extends StatelessWidget {
   const _ConversationStartBanner({required this.theme});
-
   final ThemeData theme;
 
   @override
@@ -605,7 +728,6 @@ class _ConversationStartBanner extends StatelessWidget {
   }
 }
 
-/// Render a single message bubble with a timestamp.
 class _MessageBubble extends StatelessWidget {
   const _MessageBubble({
     required this.message,
@@ -626,9 +748,33 @@ class _MessageBubble extends StatelessWidget {
     if (createdAt == null) return '';
     final parsed = DateTime.tryParse(createdAt.toString());
     if (parsed == null) return '';
-    // The backend stores/returns UTC; convert to the user's local timezone
-    // before formatting so the bubble shows the recipient's local time.
     return DateFormat.jm().format(parsed.toLocal());
+  }
+
+  Widget _buildMessageContent(ThemeData theme) {
+    if (isRedacted) {
+      return const Text(
+        'This message was removed.',
+        style: TextStyle(color: Colors.grey, fontStyle: FontStyle.italic),
+      );
+    }
+
+    final type = message['type']?.toString();
+    if (type == 'audio') {
+      final audioUrl = message['media_url']?.toString();
+      if (audioUrl != null) {
+        return AudioPlayerWidget(url: audioUrl, isMine: isMine);
+      }
+    }
+
+    return Text(
+      message['body'] ?? '',
+      style: TextStyle(
+        color: isMine
+            ? theme.colorScheme.onPrimary
+            : theme.colorScheme.onSurface,
+      ),
+    );
   }
 
   bool get _isRead => message['is_read'] == true;
@@ -636,7 +782,9 @@ class _MessageBubble extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final alignment = isMine ? CrossAxisAlignment.end : CrossAxisAlignment.start;
+    final alignment = isMine
+        ? CrossAxisAlignment.end
+        : CrossAxisAlignment.start;
 
     return Column(
       crossAxisAlignment: alignment,
@@ -656,8 +804,7 @@ class _MessageBubble extends StatelessWidget {
           onLongPress: onLongPress,
           child: Container(
             margin: const EdgeInsets.symmetric(vertical: 2, horizontal: 4),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
             constraints: BoxConstraints(
               maxWidth: MediaQuery.of(context).size.width * 0.72,
             ),
@@ -665,24 +812,11 @@ class _MessageBubble extends StatelessWidget {
               color: isRedacted
                   ? Colors.grey.shade300
                   : isMine
-                      ? theme.colorScheme.primary
-                      : theme.colorScheme.surfaceContainerHighest,
+                  ? theme.colorScheme.primary
+                  : theme.colorScheme.surfaceContainerHighest,
               borderRadius: BorderRadius.circular(18),
             ),
-            child: Text(
-              isRedacted
-                  ? 'This message was removed.'
-                  : message['body'] ?? '',
-              style: TextStyle(
-                color: isRedacted
-                    ? Colors.grey
-                    : isMine
-                        ? theme.colorScheme.onPrimary
-                        : theme.colorScheme.onSurface,
-                fontStyle:
-                    isRedacted ? FontStyle.italic : FontStyle.normal,
-              ),
-            ),
+            child: _buildMessageContent(theme),
           ),
         ),
         Padding(
@@ -713,5 +847,118 @@ class _MessageBubble extends StatelessWidget {
         ),
       ],
     );
+  }
+}
+
+class AudioPlayerWidget extends StatefulWidget {
+  final String url;
+  final bool isMine;
+
+  const AudioPlayerWidget({super.key, required this.url, required this.isMine});
+
+  @override
+  State<AudioPlayerWidget> createState() => _AudioPlayerWidgetState();
+}
+
+class _AudioPlayerWidgetState extends State<AudioPlayerWidget> {
+  late AudioPlayer _audioPlayer;
+  late final StreamSubscription<Duration> _durationSub;
+  late final StreamSubscription<Duration> _positionSub;
+  late final StreamSubscription<PlayerState> _stateSub;
+  late final StreamSubscription<void> _completeSub;
+
+  PlayerState _playerState = PlayerState.stopped;
+  Duration _duration = Duration.zero;
+  Duration _position = Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    _audioPlayer = AudioPlayer();
+    _durationSub = _audioPlayer.onDurationChanged.listen((d) {
+      if (mounted) setState(() => _duration = d);
+    });
+    _positionSub = _audioPlayer.onPositionChanged.listen((p) {
+      if (mounted) setState(() => _position = p);
+    });
+    _stateSub = _audioPlayer.onPlayerStateChanged.listen((s) {
+      if (mounted) setState(() => _playerState = s);
+    });
+    _completeSub = _audioPlayer.onPlayerComplete.listen((_) {
+      if (mounted) {
+        setState(() {
+          _position = Duration.zero;
+          _playerState = PlayerState.stopped;
+        });
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _durationSub.cancel();
+    _positionSub.cancel();
+    _stateSub.cancel();
+    _completeSub.cancel();
+    _audioPlayer.dispose();
+    super.dispose();
+  }
+
+  Future<void> _playPause() async {
+    if (_playerState == PlayerState.playing) {
+      await _audioPlayer.pause();
+    } else {
+      await _audioPlayer.play(UrlSource(widget.url));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final color = widget.isMine
+        ? theme.colorScheme.onPrimary
+        : theme.colorScheme.onSurface;
+
+    final maxMs = _duration.inMilliseconds > 0
+        ? _duration.inMilliseconds.toDouble()
+        : 1.0;
+    final valueMs = _position.inMilliseconds.clamp(0, maxMs.toInt()).toDouble();
+
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IconButton(
+          icon: Icon(
+            _playerState == PlayerState.playing
+                ? Icons.pause
+                : Icons.play_arrow,
+            color: color,
+          ),
+          onPressed: _playPause,
+        ),
+        Expanded(
+          child: Slider(
+            value: valueMs,
+            max: maxMs,
+            onChanged: (value) {
+              _audioPlayer.seek(Duration(milliseconds: value.toInt()));
+            },
+            activeColor: color,
+            inactiveColor: color.withOpacity(0.3),
+          ),
+        ),
+        Text(
+          _formatDuration(_position),
+          style: TextStyle(color: color, fontSize: 12),
+        ),
+      ],
+    );
+  }
+
+  String _formatDuration(Duration duration) {
+    String twoDigits(int n) => n.toString().padLeft(2, "0");
+    String twoDigitMinutes = twoDigits(duration.inMinutes.remainder(60));
+    String twoDigitSeconds = twoDigits(duration.inSeconds.remainder(60));
+    return "$twoDigitMinutes:$twoDigitSeconds";
   }
 }

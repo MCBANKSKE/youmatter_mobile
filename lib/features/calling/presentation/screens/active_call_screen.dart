@@ -146,11 +146,7 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
             isActive: false,
             activeColor: Colors.red,
             iconColor: Colors.white,
-            onPressed: () async {
-              await ref.read(callStateProvider.notifier).endCall();
-              if (!mounted) return;
-              Navigator.of(this.context).pop();
-            },
+            onPressed: () => ref.read(callStateProvider.notifier).endCall(),
           ),
           _buildControlButton(
             heroTag: 'speaker',
@@ -238,8 +234,6 @@ class _ActiveCallScreenState extends ConsumerState<ActiveCallScreen> {
             onPressed: () async {
               Navigator.pop(context);
               await ref.read(callStateProvider.notifier).endCall();
-              if (!mounted) return;
-              Navigator.of(this.context).pop();
             },
             child: const Text('Block'),
           ),

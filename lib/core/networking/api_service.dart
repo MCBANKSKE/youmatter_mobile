@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:youmatter_mobile/core/networking/dio_client.dart';
 
 class ApiService {
@@ -97,6 +98,27 @@ class ApiService {
     final response = await _dioClient.dio.post(
       '/conversations/$conversationId/messages',
       data: {'body': body},
+    );
+    return response.data;
+  }
+
+  Future<Map<String, dynamic>> sendAudioMessage(
+    String conversationId,
+    String filePath, {
+    int? duration,
+    String body = 'Voice message',
+  }) async {
+    final formData = FormData.fromMap({
+      'body': body,
+      if (duration != null) 'duration': duration,
+      'audio': await MultipartFile.fromFile(
+        filePath,
+        filename: 'audio_message.m4a',
+      ),
+    });
+    final response = await _dioClient.dio.post(
+      '/conversations/$conversationId/messages',
+      data: formData,
     );
     return response.data;
   }

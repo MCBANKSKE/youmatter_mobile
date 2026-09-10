@@ -55,7 +55,6 @@ class OutgoingCallScreen extends ConsumerWidget {
                   heroTag: 'cancel',
                   onPressed: () async {
                     await ref.read(callStateProvider.notifier).endCall();
-                    if (context.mounted) Navigator.of(context).pop();
                   },
                   backgroundColor: Colors.red,
                   child: const Icon(Icons.call_end, color: Colors.white),

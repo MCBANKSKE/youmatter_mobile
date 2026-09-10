@@ -1,4 +1,8 @@
+import 'dart:io';
+
 import 'package:dio/dio.dart';
+import 'package:http_parser/http_parser.dart';
+import 'package:path/path.dart' as p;
 import 'package:youmatter_mobile/core/networking/dio_client.dart';
 
 class ApiService {
@@ -110,31 +114,76 @@ class ApiService {
     return response.data;
   }
 
+  /// Send an audio (voice) message as a single independent multipart POST.
+  ///
+  /// The backend `POST /conversations/{id}/messages` endpoint accepts
+  /// `body` + `audio` + `duration` together, so no placeholder message and no
+  /// second `/audio` call is needed. Returns the created message including
+  /// `media_url` / `type`.
   Future<Map<String, dynamic>> sendAudioMessage(
     String conversationId,
     String filePath, {
     int? duration,
     String body = 'Voice message',
   }) async {
-    // Step 1: Create a placeholder message
-    final message = await sendMessage(conversationId, body);
-    final messageId = message['id'].toString();
+    final file = File(filePath);
+    if (!await file.exists()) {
+      throw Exception('Audio file not found');
+    }
+    final length = await file.length();
+    if (length == 0) {
+      throw Exception('Audio file is empty');
+    }
+    // Backend limit is 10 MB (max:10240 KB).
+    if (length > 10 * 1024 * 1024) {
+      throw Exception('Audio file is too large (max 10 MB)');
+    }
 
-    // Step 2: Upload the audio file to the message
+    final ext = p.extension(filePath).toLowerCase().replaceFirst('.', '');
+    final filename = p.basename(filePath).isNotEmpty
+        ? p.basename(filePath)
+        : 'audio_message.m4a';
+    final contentType = _audioMediaType(ext);
+
     final formData = FormData.fromMap({
-      if (duration != null) 'duration': duration,
+      'body': body,
+      if (duration != null) 'duration': duration.toString(),
       'audio': await MultipartFile.fromFile(
         filePath,
-        filename: 'audio_message.m4a',
+        filename: filename,
+        contentType: contentType,
       ),
     });
     final response = await _dioClient.dio.post(
-      '/conversations/$conversationId/messages/$messageId/audio',
+      '/conversations/$conversationId/messages',
       data: formData,
+      options: Options(contentType: 'multipart/form-data'),
     );
 
-    // Return the updated message with audio
-    return response.data['message'] ?? message;
+    final data = response.data;
+    if (data is Map<String, dynamic>) return data;
+    throw Exception('Unexpected audio upload response');
+  }
+
+  MediaType _audioMediaType(String ext) {
+    switch (ext) {
+      case 'mp3':
+        return MediaType('audio', 'mpeg');
+      case 'wav':
+        return MediaType('audio', 'wav');
+      case 'ogg':
+      case 'oga':
+        return MediaType('audio', 'ogg');
+      case 'webm':
+        return MediaType('audio', 'webm');
+      case 'aac':
+        return MediaType('audio', 'aac');
+      case 'mp4':
+      case 'm4a':
+      default:
+        // .m4a recordings are MP4 audio containers.
+        return MediaType('audio', 'mp4');
+    }
   }
 
   Future<List<dynamic>> getNotifications() async {

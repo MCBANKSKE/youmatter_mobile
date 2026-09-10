@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:youmatter_mobile/features/messaging/services/audio_recording_service.dart';
+import 'package:youmatter_mobile/features/messages/services/voice_message_service.dart';
 
 /// Provider for the audio recording service
 final audioRecordingServiceProvider = Provider<AudioRecordingService>((ref) {
@@ -77,7 +77,7 @@ class _MessageInputState extends ConsumerState<MessageInput> {
 
   Future<void> _stopRecording() async {
     final audioService = ref.read(audioRecordingServiceProvider);
-    final path = await audioService.stopRecording();
+    final recorded = await audioService.stopRecording();
 
     if (mounted) {
       setState(() {
@@ -85,8 +85,8 @@ class _MessageInputState extends ConsumerState<MessageInput> {
       });
     }
 
-    if (path != null) {
-      widget.onSendMessage('[Audio message]', audioPath: path);
+    if (recorded != null) {
+      widget.onSendMessage('[Audio message]', audioPath: recorded.path);
     }
   }
 

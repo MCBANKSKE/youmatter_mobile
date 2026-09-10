@@ -1,14 +1,11 @@
 import 'dart:async';
-
 import 'package:audioplayers/audioplayers.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
-import 'package:path/path.dart' as p;
-import 'package:path_provider/path_provider.dart';
-import 'package:record/record.dart';
 import 'package:youmatter_mobile/core/networking/api_service.dart';
 import 'package:youmatter_mobile/features/calling/providers/call_state_provider.dart';
+import 'package:youmatter_mobile/features/messages/services/voice_message_service.dart';
 import 'package:youmatter_mobile/features/messaging/presentation/widgets/conversation_timer_widget.dart';
 
 // ---------------------------------------------------------------------------
@@ -29,7 +26,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   final _api = ApiService();
   final _messageController = TextEditingController();
   final _scrollController = ScrollController();
-  final _audioRecorder = AudioRecorder();
+  final _voiceService = VoiceMessageService();
 
   List<dynamic> _messages = [];
   Map<String, dynamic>? _conversation;
@@ -39,7 +36,6 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   String? _error;
 
   bool _isRecording = false;
-  String? _audioPath;
 
   Timer? _pollTimer;
   bool _signalingInitialized = false;
@@ -64,7 +60,7 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
     _messageController.removeListener(_onComposerChanged);
     _messageController.dispose();
     _scrollController.dispose();
-    _audioRecorder.dispose();
+    _voiceService.dispose();
     super.dispose();
   }
 
@@ -186,8 +182,8 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
 
   Future<void> _startRecording() async {
     try {
-      final hasPermission = await _audioRecorder.hasPermission();
-      if (!hasPermission) {
+      final path = await _voiceService.startRecording();
+      if (path == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('Microphone permission is required.')),
@@ -195,17 +191,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
         }
         return;
       }
-      final dir = await getTemporaryDirectory();
-      final path = p.join(
-        dir.path,
-        'audio_msg_${DateTime.now().millisecondsSinceEpoch}.m4a',
-      );
-
-      await _audioRecorder.start(const RecordConfig(), path: path);
       if (!mounted) return;
       setState(() {
         _isRecording = true;
-        _audioPath = path;
       });
     } catch (e) {
       debugPrint('Error starting recording: $e');
@@ -218,14 +206,9 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
   }
 
   Future<void> _stopRecording() async {
+    RecordedAudio? recorded;
     try {
-      final path = await _audioRecorder.stop();
-      if (!mounted) return;
-      setState(() => _isRecording = false);
-
-      if (path != null) {
-        await _sendAudioMessage(path);
-      }
+      recorded = await _voiceService.stopRecording();
     } catch (e) {
       debugPrint('Error stopping recording: $e');
       if (!mounted) return;
@@ -233,55 +216,58 @@ class _ChatScreenState extends ConsumerState<ChatScreen> {
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('Could not stop recording: $e')));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _isRecording = false);
+
+    if (recorded != null) {
+      await _sendAudioMessage(recorded.path, duration: recorded.durationSeconds);
     }
   }
 
   Future<void> _cancelRecording() async {
     try {
-      await _audioRecorder.stop();
-      final path = _audioPath;
-      if (path != null) {
-        _deleteTempFile(path);
-      }
+      await _voiceService.cancelRecording();
       if (!mounted) return;
       setState(() {
         _isRecording = false;
-        _audioPath = null;
       });
     } catch (e) {
       debugPrint('Error cancelling recording: $e');
     }
   }
 
-  Future<void> _sendAudioMessage(String path) async {
+  Future<void> _sendAudioMessage(String path, {int? duration}) async {
     setState(() => _sending = true);
     try {
-      final message = await _api.sendAudioMessage(widget.conversationId, path);
-      _deleteTempFile(path);
+      final message = await _api.sendAudioMessage(
+        widget.conversationId,
+        path,
+        duration: duration,
+      );
       if (!mounted) return;
       setState(() {
         _messages.add(message);
-        _audioPath = null;
       });
       _scrollToBottom();
     } catch (e) {
       debugPrint('Audio send error: $e');
       if (!mounted) return;
+      String friendly = 'Could not send audio message.';
+      final text = e.toString();
+      if (text.contains('422')) {
+        friendly =
+            'Could not send audio message: server rejected the file (422).';
+      }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Could not send audio message: $e')),
+        SnackBar(content: Text(friendly)),
       );
     } finally {
+      // Always clean up the local temp file, success or failure.
+      await _voiceService.deleteRecording(path);
       if (mounted) setState(() => _sending = false);
     }
-  }
-
-  void _deleteTempFile(String path) {
-    // Best-effort cleanup; ignore failures.
-    try {
-      // Using dart:io File directly to avoid extra imports.
-      // ignore: avoid_dynamic_calls
-      (path as dynamic); // no-op to keep `path` referenced if unused elsewhere
-    } catch (_) {}
   }
 
   Future<void> _redact(Map<String, dynamic> message) async {
